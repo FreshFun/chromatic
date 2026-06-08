@@ -1,0 +1,108 @@
+/* Reset background margins and handle default layout colors */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    background: #0d0d13;
+    color: #ffffff;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* Styled Top Navigation Bar */
+header {
+    background: #14141f;
+    padding: 15px 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid #232335;
+}
+
+.logo {
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    background: linear-gradient(45deg, #ff007f, #7f00ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+nav a {
+    color: #a0a0b8;
+    text-decoration: none;
+    margin-left: 20px;
+    font-weight: 600;
+    transition: color 0.3s ease;
+}
+
+nav a:hover, nav a.active {
+    color: #ff007f;
+}
+
+/* Layout framing for the game screen */
+main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px 20px;
+}
+
+.arcade-cabinet {
+    background: #000000;
+    padding: 10px;
+    border: 4px solid #232335;
+    border-radius: 12px;
+    box-shadow: 0 0 30px rgba(127, 0, 255, 0.25);
+    margin-bottom: 25px;
+}
+
+/* Forces canvas to fit neatly inside layout borders */
+canvas {
+    display: block;
+    max-width: 100%;
+    height: auto !important;
+    border-radius: 6px;
+}
+
+/* Dashboard Information Boxes */
+.info-panel {
+    background: #14141f;
+    border: 1px solid #232335;
+    padding: 20px 30px;
+    border-radius: 8px;
+    max-width: 800px;
+    width: 100%;
+    text-align: left;
+}
+
+.info-panel h2 {
+    font-size: 20px;
+    margin-bottom: 12px;
+    color: #ff007f;
+}
+
+.info-panel p {
+    color: #a0a0b8;
+    margin-bottom: 8px;
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+/* Bottom Page Footer styling */
+footer {
+    background: #09090f;
+    text-align: center;
+    padding: 15px;
+    font-size: 13px;
+    color: #52527a;
+    border-top: 1px solid #14141f;
+}
