@@ -4,44 +4,81 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CHROMATIC - Play Online Free</title>
-    <!-- Link the CSS file -->
+
     <link rel="stylesheet" href="style.css">
-    <!-- Include the p5.js engine libraries -->
-    <script src="https://cloudflare.com"></script>
+
+    <!-- p5.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
 </head>
 <body>
 
-    <!-- Header Navigation Bar -->
     <header>
         <div class="logo">CHROMATIC</div>
+
         <nav>
             <a href="#" class="active">Play</a>
             <a href="https://itch.io" target="_blank">Support Me</a>
         </nav>
     </header>
 
-    <!-- Main Arcade Container -->
     <main>
-        <div class="arcade-cabinet">
-            <!-- This div wraps your dynamic p5.js canvas container -->
-            <div id="game-container"></div>
-        </div>
 
-        <!-- Dashboard Game Info Box -->
-        <div class="info-panel">
-            <h2>How to Play</h2>
-            <p>🕹️ Use your mouse to navigate the menus and click <strong>PLAY</strong>.</p>
-            <p>🔮 <strong>DEFAULT MODE:</strong> Watch the ball pick up speed and grow larger with every colorful bounce!</p>
-            <p>🌌 <strong>ESCAPE MODE:</strong> See if the ball can slip through the open arena gap into deep space.</p>
-        </div>
+        <section class="hero">
+            <h1>CHROMATIC</h1>
+            <p>Precision • Speed • Color</p>
+        </section>
+
+        <section class="game-section">
+
+            <div class="arcade-cabinet">
+                <div id="game-container"></div>
+            </div>
+
+            <div class="info-panel">
+
+                <h2>How To Play</h2>
+
+                <p>
+                    🕹️ Use your mouse to navigate menus and click
+                    <strong>PLAY</strong>.
+                </p>
+
+                <p>
+                    🔮 <strong>Default Mode</strong><br>
+                    Watch the ball gain speed and grow larger with every
+                    colorful bounce.
+                </p>
+
+                <p>
+                    🌌 <strong>Escape Mode</strong><br>
+                    Try to guide the ball through the arena opening and into
+                    deep space.
+                </p>
+
+                <div class="divider"></div>
+
+                <h3>Features</h3>
+
+                <ul>
+                    <li>Dynamic Color Effects</li>
+                    <li>Smooth Physics</li>
+                    <li>Endless Arcade Gameplay</li>
+                    <li>Minimalist Visual Design</li>
+                </ul>
+
+            </div>
+
+        </section>
+
     </main>
 
-    <!-- Footer Bar -->
     <footer>
-        <p>&copy; 2026 FreshFun Games. Created via p5.js. Powered by GitHub Pages.</p>
+        <p>
+            © 2026 FreshFun Games • Built with p5.js • Hosted on GitHub Pages
+        </p>
     </footer>
 
-    <!-- Link your game logic script -->
     <script src="sketch.js"></script>
+
 </body>
 </html>
