@@ -19,6 +19,7 @@ let bounceCount = 0;
 function setup() {
   createCanvas(800, 800);
   colorMode(HSB, 360, 100, 100, 100);
+  textFont("monospace");
 }
 
 /* ---------------- RESET ---------------- */
@@ -43,38 +44,86 @@ function resetGame() {
 /* ---------------- MAIN LOOP ---------------- */
 
 function draw() {
-  background(0);
+  drawBackground();
 
   if (gameState === "menu") drawMenu();
   else if (gameState === "default") runDefaultGame();
+
+  drawScanlines();
+}
+
+/* ---------------- BACKGROUND ---------------- */
+
+function drawBackground() {
+  background(230, 40, 6);
+
+  stroke(180, 40, 20, 25);
+  strokeWeight(1);
+
+  let gridSize = 40;
+  for (let x = 0; x < width; x += gridSize) {
+    line(x, 0, x, height);
+  }
+  for (let y = 0; y < height; y += gridSize) {
+    line(0, y, width, y);
+  }
+
+  noStroke();
+  fill(190, 80, 100, bounceFlash * 0.4);
+  circle(width / 2, height / 2, arenaRadius * 2.2);
+}
+
+/* ---------------- SCANLINES ---------------- */
+
+function drawScanlines() {
+  noStroke();
+  fill(0, 0, 0, 6);
+  for (let y = 0; y < height; y += 4) {
+    rect(0, y, width, 2);
+  }
 }
 
 /* ---------------- MENU ---------------- */
 
 function drawMenu() {
-  fill(255);
   textAlign(CENTER, CENTER);
 
-  textSize(42);
+  fill(200, 100, 100);
+  textSize(48);
   text("CHROMATIC", width / 2, 120);
 
-  rectMode(CENTER);
+  let hover =
+    mouseX > width / 2 - 80 &&
+    mouseX < width / 2 + 80 &&
+    mouseY > 215 &&
+    mouseY < 265;
 
-  fill(255);
-  rect(width / 2, 240, 160, 50, 10);
+  noStroke();
+  fill(180, 100, 100, hover ? 40 : 20);
+  rect(width / 2, 240, 180, 60, 12);
 
-  fill(0);
-  textSize(24);
+  stroke(180, 100, 100);
+  noFill();
+  rect(width / 2, 240, 180, 60, 12);
+
+  // ✅ FIXED ALIGNMENT ONLY
+  fill(180, 100, 100);
+  noStroke();
+  textSize(22);
+  textAlign(CENTER, CENTER);
   text("PLAY", width / 2, 240);
 }
 
 /* ---------------- INPUT ---------------- */
 
 function mousePressed() {
-
   if (gameState === "menu") {
-    if (mouseX > width/2-80 && mouseX < width/2+80 &&
-        mouseY > 215 && mouseY < 265) {
+    if (
+      mouseX > width / 2 - 80 &&
+      mouseX < width / 2 + 80 &&
+      mouseY > 215 &&
+      mouseY < 265
+    ) {
       resetGame();
       gameState = "default";
     }
@@ -86,21 +135,28 @@ function mousePressed() {
 function runDefaultGame() {
   simulateGame();
   drawArena();
+  drawHUD();
+}
 
-  // ✅ FIXED HUD (always visible)
+/* ---------------- HUD ---------------- */
+
+function drawHUD() {
   push();
   resetMatrix();
 
-  // background box
   noStroke();
-  fill(0, 0, 0, 160);
-  rect(10, 10, 200, 45, 8);
+  fill(190, 100, 100, 15);
+  rect(10, 10, 220, 60, 10);
 
-  // text
-  fill(255);
-  textSize(26);
+  stroke(190, 100, 100, 80);
+  noFill();
+  rect(10, 10, 220, 60, 10);
+
+  fill(190, 100, 100);
+  noStroke();
+  textSize(20);
   textAlign(LEFT, TOP);
-  text("Bounces: " + bounceCount, 20, 18);
+  text("B O U N C E S : " + bounceCount, 20, 25);
 
   pop();
 }
@@ -108,7 +164,6 @@ function runDefaultGame() {
 /* ---------------- CORE SIMULATION ---------------- */
 
 function simulateGame() {
-
   vy += gravity;
 
   ballX += vx;
@@ -154,17 +209,24 @@ function simulateGame() {
 
   push();
   translate(ballX, ballY);
+
+  for (let i = 6; i > 0; i--) {
+    noStroke();
+    fill(190, 100, 100, 6);
+    circle(0, 0, ballRadius * 2 + i * 3);
+  }
+
+  stroke(190, 100, 100);
+  strokeWeight(2);
   fill(0, 0, 0);
-  stroke(0, 0, 100);
-  strokeWeight(2.5);
   circle(0, 0, ballRadius * 2);
+
   pop();
 }
 
 /* ---------------- BOUNCE ---------------- */
 
 function bounce(dx, dy, distFromCenter) {
-
   let nx = dx / distFromCenter;
   let ny = dy / distFromCenter;
 
@@ -202,7 +264,12 @@ function bounce(dx, dy, distFromCenter) {
 
 function drawArena() {
   noFill();
-  stroke(255);
-  strokeWeight(3);
+
+  stroke(190, 100, 100, 20);
+  strokeWeight(10);
+  circle(width / 2, height / 2, arenaRadius * 2);
+
+  stroke(190, 100, 100);
+  strokeWeight(2);
   circle(width / 2, height / 2, arenaRadius * 2);
 }
