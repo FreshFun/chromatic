@@ -2,33 +2,28 @@ let gameState = "menu";
 
 // BALL
 let ballX, ballY;
-let ballRadius = 12;
+let ballRadius = 10;
 let vx, vy;
 
 // WORLD
 let gravity = 0.06;
 let arenaRadius = 180;
 
-// TRAIL
+// TRAIL + EFFECTS
 let trail = [];
+let bounceFlash = 0;
 
-// GAP
-let gapSize = 0.12;
-let gapStart = -gapSize;
-let gapEnd = gapSize;
+// BOUNCE COUNTER
+let bounceCount = 0;
 
 function setup() {
-
-  let canvas = createCanvas(800, 800);
-  canvas.parent("game-container");
-
+  createCanvas(800, 800);
   colorMode(HSB, 360, 100, 100, 100);
-
-  resetGame();
 }
 
-function resetGame() {
+/* ---------------- RESET ---------------- */
 
+function resetGame() {
   ballX = width / 2;
   ballY = height / 2;
 
@@ -38,235 +33,176 @@ function resetGame() {
   vx = cos(dir) * speed;
   vy = sin(dir) * speed;
 
-  ballRadius = 12;
+  ballRadius = 10;
   trail = [];
+  bounceFlash = 0;
+
+  bounceCount = 0;
 }
+
+/* ---------------- MAIN LOOP ---------------- */
 
 function draw() {
+  background(0);
 
-  background(220, 80, 10);
-
-  if (gameState === "menu") {
-    drawMenu();
-  }
-  else if (gameState === "modeSelect") {
-    drawModeSelect();
-  }
-  else if (gameState === "default") {
-    runGame(false);
-    drawArena();
-  }
-  else if (gameState === "escape") {
-    runGame(true);
-    drawEscapeArena();
-    checkEscape();
-  }
+  if (gameState === "menu") drawMenu();
+  else if (gameState === "default") runDefaultGame();
 }
 
-/* ================= MENU ================= */
+/* ---------------- MENU ---------------- */
 
 function drawMenu() {
-
+  fill(255);
   textAlign(CENTER, CENTER);
 
-  fill(210, 100, 100);
-  textSize(70);
-  text("CHROMATIC", width/2, 160);
-
-  let hover =
-    mouseX > width/2-120 &&
-    mouseX < width/2+120 &&
-    mouseY > 300 &&
-    mouseY < 370;
-
-  fill(hover ? 210 : 220, 90, 90);
+  textSize(42);
+  text("CHROMATIC", width / 2, 120);
 
   rectMode(CENTER);
-  noStroke();
 
-  rect(width/2, 335, 240, 70, 16);
-
-  fill(0);
-  textSize(30);
-  text("PLAY", width/2, 335);
-}
-
-/* ================= MODE SELECT ================= */
-
-function drawModeSelect() {
-
-  textAlign(CENTER, CENTER);
-
-  fill(210, 100, 100);
-  textSize(50);
-  text("SELECT MODE", width/2, 120);
-
-  drawButton(width/2, 280, "DEFAULT");
-  drawButton(width/2, 390, "ESCAPE");
-}
-
-function drawButton(x, y, label) {
-
-  let hover =
-    mouseX > x-140 &&
-    mouseX < x+140 &&
-    mouseY > y-35 &&
-    mouseY < y+35;
-
-  fill(hover ? 210 : 220, 80, 85);
-
-  rectMode(CENTER);
-  noStroke();
-
-  rect(x, y, 280, 70, 16);
+  fill(255);
+  rect(width / 2, 240, 160, 50, 10);
 
   fill(0);
-  textSize(28);
-  text(label, x, y);
+  textSize(24);
+  text("PLAY", width / 2, 240);
 }
 
-/* ================= INPUT ================= */
+/* ---------------- INPUT ---------------- */
 
 function mousePressed() {
 
   if (gameState === "menu") {
-
-    if (
-      mouseX > width/2-120 &&
-      mouseX < width/2+120 &&
-      mouseY > 300 &&
-      mouseY < 370
-    ) {
-      gameState = "modeSelect";
-    }
-  }
-
-  else if (gameState === "modeSelect") {
-
-    if (
-      mouseX > width/2-140 &&
-      mouseX < width/2+140 &&
-      mouseY > 245 &&
-      mouseY < 315
-    ) {
+    if (mouseX > width/2-80 && mouseX < width/2+80 &&
+        mouseY > 215 && mouseY < 265) {
       resetGame();
       gameState = "default";
-    }
-
-    if (
-      mouseX > width/2-140 &&
-      mouseX < width/2+140 &&
-      mouseY > 355 &&
-      mouseY < 425
-    ) {
-      resetGame();
-      gameState = "escape";
     }
   }
 }
 
-/* ================= GAME ================= */
+/* ---------------- GAME ---------------- */
 
-function runGame(escapeMode) {
+function runDefaultGame() {
+  simulateGame();
+  drawArena();
+
+  // ✅ FIXED HUD (always visible)
+  push();
+  resetMatrix();
+
+  // background box
+  noStroke();
+  fill(0, 0, 0, 160);
+  rect(10, 10, 200, 45, 8);
+
+  // text
+  fill(255);
+  textSize(26);
+  textAlign(LEFT, TOP);
+  text("Bounces: " + bounceCount, 20, 18);
+
+  pop();
+}
+
+/* ---------------- CORE SIMULATION ---------------- */
+
+function simulateGame() {
 
   vy += gravity;
 
   ballX += vx;
   ballY += vy;
 
-  let dx = ballX - width/2;
-  let dy = ballY - height/2;
+  let ballHue = (frameCount * 3) % 360;
 
-  let dist = sqrt(dx*dx + dy*dy);
-  let angle = atan2(dy, dx);
+  let dx = ballX - width / 2;
+  let dy = ballY - height / 2;
 
-  let hit = dist + ballRadius >= arenaRadius;
+  let distFromCenter = sqrt(dx * dx + dy * dy);
 
-  if (escapeMode) {
+  let hitWall = distFromCenter + ballRadius >= arenaRadius;
 
-    let inGap = angle > gapStart && angle < gapEnd;
-
-    if (hit && !inGap) bounce(dx, dy, dist);
-
-  } else {
-
-    if (hit) bounce(dx, dy, dist);
+  if (hitWall) {
+    bounce(dx, dy, distFromCenter);
   }
 
-  trail.push({x: ballX, y: ballY});
+  trail.push({
+    x: ballX,
+    y: ballY,
+    r: ballRadius,
+    hue: ballHue
+  });
 
-  if (trail.length > 120) trail.shift();
+  if (trail.length > 350) trail.shift();
 
-  // trail
   noFill();
-  stroke(210, 80, 100, 60);
 
-  for (let i = 0; i < trail.length; i++) {
-    circle(trail[i].x, trail[i].y, ballRadius*2);
+  for (let i = 1; i < trail.length; i++) {
+    let t = trail[i];
+    let a = pow(i / trail.length, 1.5) * 100;
+
+    let ringR = t.r * 0.9;
+    let lw = max(1, ringR * 0.55);
+
+    stroke(t.hue, 100, 100, a);
+    strokeWeight(lw);
+    circle(t.x, t.y, ringR * 2);
   }
 
-  // ball
-  fill(0);
+  bounceFlash *= 0.85;
+
+  push();
+  translate(ballX, ballY);
+  fill(0, 0, 0);
   stroke(0, 0, 100);
-  circle(ballX, ballY, ballRadius*2);
+  strokeWeight(2.5);
+  circle(0, 0, ballRadius * 2);
+  pop();
 }
 
-/* ================= PHYSICS ================= */
+/* ---------------- BOUNCE ---------------- */
 
-function bounce(dx, dy, dist) {
+function bounce(dx, dy, distFromCenter) {
 
-  let nx = dx / dist;
-  let ny = dy / dist;
+  let nx = dx / distFromCenter;
+  let ny = dy / distFromCenter;
 
-  ballX = width/2 + nx*(arenaRadius-ballRadius);
-  ballY = height/2 + ny*(arenaRadius-ballRadius);
+  ballX = width / 2 + nx * (arenaRadius - ballRadius);
+  ballY = height / 2 + ny * (arenaRadius - ballRadius);
 
-  let dot = vx*nx + vy*ny;
+  let dot = vx * nx + vy * ny;
 
-  vx -= 2 * dot * nx;
-  vy -= 2 * dot * ny;
+  let vnX = nx * dot;
+  let vnY = ny * dot;
+
+  let vtX = vx - vnX;
+  let vtY = vy - vnY;
+
+  vnX *= -0.98;
+  vnY *= -0.98;
+
+  vx = vnX + vtX;
+  vy = vnY + vtY;
 
   vx *= 1.03;
   vy *= 1.03;
 
-  ballRadius *= 1.02;
+  vx += random(-0.5, 0.5);
+  vy += random(-0.5, 0.5);
+
+  ballRadius = ballRadius * 1.04 + 0.4;
+
+  bounceFlash = 60;
+
+  bounceCount++;
 }
 
-/* ================= ARENAS ================= */
+/* ---------------- ARENA ---------------- */
 
 function drawArena() {
-
   noFill();
-  stroke(0,0,100);
+  stroke(255);
   strokeWeight(3);
-
-  circle(width/2, height/2, arenaRadius*2);
-}
-
-function drawEscapeArena() {
-
-  noFill();
-  stroke(0,0,100);
-  strokeWeight(3);
-
-  arc(
-    width/2,
-    height/2,
-    arenaRadius*2,
-    arenaRadius*2,
-    gapEnd,
-    gapStart + TWO_PI
-  );
-}
-
-/* ================= ESCAPE ================= */
-
-function checkEscape() {
-
-  let dx = ballX - width/2;
-  let dy = ballY - height/2;
-
-  if (sqrt(dx*dx + dy*dy) > arenaRadius + 50) {
-    gameState = "menu";
-  }
+  circle(width / 2, height / 2, arenaRadius * 2);
 }
