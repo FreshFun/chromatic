@@ -11,13 +11,13 @@ let arenaRadius = 180;
 
 // TRAIL + EFFECTS
 let trail = [];
-let bounceFlash = 0;
+let bounceFlash = 1;
 
 // BOUNCE COUNTER
 let bounceCount = 0;
 
 function setup() {
-  createCanvas(800, 800);
+  createCanvas(600, 700);
   colorMode(HSB, 360, 100, 100, 100);
   textFont("monospace");
 }
@@ -90,7 +90,7 @@ function drawMenu() {
 
   fill(200, 100, 100);
   textSize(48);
-  text("CHROMATIC", width / 2, 120);
+  text("CHROMATIC", width / 1.65, 200);
 
   let hover =
     mouseX > width / 2 - 80 &&
@@ -109,9 +109,9 @@ function drawMenu() {
   // ✅ FIXED ALIGNMENT ONLY
   fill(180, 100, 100);
   noStroke();
-  textSize(22);
+  textSize(50);
   textAlign(CENTER, CENTER);
-  text("PLAY", width / 2, 240);
+  text("PLAY", width / 1.65, 270);
 }
 
 /* ---------------- INPUT ---------------- */
