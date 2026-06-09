@@ -1,28 +1,40 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CHROMATIC</title>
+<div class="chromatic-wrap">
+  <div class="grid-bg"></div>
+  <div class="scanline"></div>
 
-  <link rel="stylesheet" href="style.css">
+  <div class="corner tl"></div>
+  <div class="corner tr"></div>
+  <div class="corner bl"></div>
+  <div class="corner br"></div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
-</head>
-
-<body>
-
-<header>
-  <div class="logo">CHROMATIC</div>
-</header>
-
-<main>
-  <div class="arcade-cabinet">
-    <div id="game-container"></div>
+  <div class="status-bar">
+    <div class="status-dot"></div>
+    <div class="status-dot"></div>
+    <div class="status-dot"></div>
+    <span class="status-text">System Ready</span>
   </div>
-</main>
 
-<script src="sketch.js"></script>
+  <div class="center-content">
+    <div class="logo-ring">
+      <div class="logo-inner">
+        <div class="logo-hex"></div>
+      </div>
+    </div>
 
-</body>
-</html>
+    <div class="game-title">Chromatic</div>
+    <div class="subtitle">Innovations of Bounce</div>
+
+    <div class="divider"></div>
+
+    <div class="btn-group">
+      <button class="btn primary" id="playBtn">
+        <span class="btn-dot"></span>Play
+      </button>
+      <button class="btn" id="settingsBtn">
+        <span class="btn-dot"></span>Settings
+      </button>
+    </div>
+  </div>
+
+  <div class="version-tag">v1.0.0</div>
+</div>
