@@ -1,0 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap');
+* { margin:0;padding:0;box-sizing:border-box; }
+#app { background:#020b18;height:600px;border-radius:12px;overflow:hidden;position:relative;font-family:'Rajdhani',sans-serif; }
+.screen { position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;transition:opacity 0.3s; }
+.screen.hidden { opacity:0;pointer-events:none; }
+.grid-bg { position:absolute;inset:0;background-image:linear-gradient(rgba(30,120,255,0.07) 1px,transparent 1px),linear-gradient(90deg,rgba(30,120,255,0.07) 1px,transparent 1px);background-size:40px 40px;animation:gridShift 20s linear infinite; }
+@keyframes gridShift { to{transform:translateY(40px)} }
+.scanline { position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,80,200,0.015) 3px,rgba(0,80,200,0.015) 4px);pointer-events:none; }
+.corner { position:absolute;width:40px;height:40px;border-color:#1e78ff;border-style:solid;opacity:0.5; }
+.corner.tl{top:20px;left:20px;border-width:2px 0 0 2px} .corner.tr{top:20px;right:20px;border-width:2px 2px 0 0}
+.corner.bl{bottom:20px;left:20px;border-width:0 0 2px 2px} .corner.br{bottom:20px;right:20px;border-width:0 2px 2px 0}
+.logo-ring { width:120px;height:120px;border-radius:50%;border:2px solid rgba(30,120,255,0.4);display:flex;align-items:center;justify-content:center;margin-bottom:28px;position:relative;animation:rotate 12s linear infinite; }
+.logo-ring::before { content:'';position:absolute;width:100px;height:100px;border-radius:50%;border:1px solid rgba(30,120,255,0.2); }
+.logo-ring::after { content:'';position:absolute;width:8px;height:8px;border-radius:50%;background:#1e78ff;top:-4px;left:50%;transform:translateX(-50%); }
+@keyframes rotate { to{transform:rotate(360deg)} }
+.logo-inner { width:80px;height:80px;border-radius:50%;background:rgba(30,120,255,0.1);border:1px solid rgba(30,120,255,0.3);display:flex;align-items:center;justify-content:center;animation:rotate 12s linear infinite reverse; }
+.logo-hex { width:36px;height:36px;background:#1e78ff;clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);opacity:0.9; }
+.game-title { font-family:'Orbitron',sans-serif;font-size:52px;font-weight:900;color:#fff;letter-spacing:12px;text-transform:uppercase;line-height:1;margin-bottom:6px;animation:titlePulse 3s ease-in-out infinite; }
+@keyframes titlePulse { 0%,100%{text-shadow:0 0 40px rgba(30,120,255,0.6)} 50%{text-shadow:0 0 60px rgba(30,120,255,0.9)} }
+.subtitle { font-size:13px;font-weight:300;color:rgba(100,160,255,0.6);letter-spacing:6px;text-transform:uppercase;margin-bottom:50px; }
+.divider { width:200px;height:1px;background:linear-gradient(90deg,transparent,rgba(30,120,255,0.5),transparent);margin-bottom:40px; }
+.btn-group { display:flex;flex-direction:column;gap:14px;width:260px; }
+.btn { padding:14px 0;background:rgba(10,40,100,0.3);border:1px solid rgba(30,120,255,0.3);color:#a0c4ff;font-family:'Orbitron',sans-serif;font-size:13px;font-weight:700;letter-spacing:4px;text-transform:uppercase;cursor:pointer;transition:all 0.2s;clip-path:polygon(12px 0%,100% 0%,calc(100% - 12px) 100%,0% 100%); }
+.btn:hover { color:#fff;border-color:rgba(30,120,255,0.8);background:rgba(10,40,100,0.6); }
+.btn.primary { background:rgba(30,120,255,0.15);border-color:rgba(30,120,255,0.6);color:#1e78ff; }
+.btn.primary:hover { background:rgba(30,120,255,0.25);color:#fff;border-color:#1e78ff; }
+.btn-dot { display:inline-block;width:5px;height:5px;border-radius:50%;background:currentColor;margin-right:10px;vertical-align:middle;opacity:0.6; }
+.version-tag { position:absolute;bottom:24px;right:28px;font-size:11px;letter-spacing:2px;color:rgba(30,120,255,0.3);text-transform:uppercase; }
+.status-bar { position:absolute;top:22px;left:50%;transform:translateX(-50%);display:flex;gap:6px;align-items:center; }
+.status-dot { width:6px;height:6px;border-radius:50%;background:#1e78ff;animation:blink 2s ease-in-out infinite; }
+.status-dot:nth-child(2){animation-delay:0.3s} .status-dot:nth-child(3){animation-delay:0.6s}
+@keyframes blink { 0%,100%{opacity:0.3} 50%{opacity:1} }
+.status-text { font-size:10px;letter-spacing:3px;color:rgba(30,120,255,0.4);text-transform:uppercase; }
+.back-btn { position:absolute;top:20px;left:20px;background:rgba(10,40,100,0.5);border:1px solid rgba(30,120,255,0.3);color:#a0c4ff;font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;clip-path:polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);z-index:10; }
+.back-btn:hover { color:#fff;border-color:#1e78ff; }
+.mode-label { position:absolute;top:20px;left:50%;transform:translateX(-50%);font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:4px;color:rgba(30,120,255,0.5);text-transform:uppercase; }
+.bounce-count { position:absolute;bottom:24px;left:50%;transform:translateX(-50%);font-family:'Orbitron',sans-serif;font-size:13px;letter-spacing:4px;color:rgba(100,160,255,0.6); }
+#app.shake { animation:screenShake 0.12s ease; }
+@keyframes screenShake { 0%,100%{transform:translate(0,0)} 25%{transform:translate(-3px,1px)} 75%{transform:translate(3px,-1px)} }
+#gameCanvas { position:absolute;inset:0;width:100%;height:100%; }
