@@ -207,7 +207,15 @@ document.getElementById('originalModeBtn').addEventListener('click', () => {
   modeLabel.textContent = 'Original Mode';
   setTimeout(startGame, 50);
 });
-
+document.getElementById('hyperModeBtn').addEventListener('click', () => {
+  playClickSfx();
+  stopMusic();
+  modeScreen.classList.add('hidden');
+  gameScreen.classList.remove('hidden');
+  currentMode = 'hyper';
+  modeLabel.textContent = 'Hyper Mode';
+  setTimeout(startGame, 50);
+});
 function startGame() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -229,6 +237,7 @@ function loop() {
   const w = canvas.width, h = canvas.height, cx = w/2, cy = h/2;
   if (currentMode === 'chromatic') loopChromatic(w, h, cx, cy);
   else if (currentMode === 'original') loopOriginal(w, h, cx, cy);
+  else if (currentMode === 'hyper') loopHyper(w, h, cx, cy);
   animId = requestAnimationFrame(loop);
 }
 function loopChromatic(w, h, cx, cy) {
@@ -266,8 +275,6 @@ function loopChromatic(w, h, cx, cy) {
     bounces++; ballRadius = 10 + bounces * 1.4;
     document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
     playBounceSfx(currentSpeed);
-    app.classList.remove('shake'); void app.offsetWidth; app.classList.add('shake');
-    setTimeout(() => app.classList.remove('shake'), 120);
   }
 }
 function loopOriginal(w, h, cx, cy) {
@@ -306,7 +313,69 @@ function loopOriginal(w, h, cx, cy) {
     bounces++; ballRadius = 10 + bounces * 1.4;
     document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
     playBounceOriginalSfx(currentSpeed);
-    app.classList.remove('shake'); void app.offsetWidth; app.classList.add('shake');
-    setTimeout(() => app.classList.remove('shake'), 120);
+  }
+}
+function playBounceHyperSfx(speed) {
+  if (!sfxEnabled) return;
+  const t = audioCtx.currentTime;
+  const pitch = Math.min(2000, 400 + speed * 50);
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  const o2 = audioCtx.createOscillator(), g2 = audioCtx.createGain();
+  o.type = 'sawtooth'; o.frequency.setValueAtTime(pitch, t);
+  o.frequency.exponentialRampToValueAtTime(pitch * 2, t + 0.05);
+  g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(t + 0.12);
+  o2.type = 'square'; o2.frequency.setValueAtTime(pitch * 1.5, t);
+  o2.frequency.exponentialRampToValueAtTime(pitch * 0.5, t + 0.08);
+  g2.gain.setValueAtTime(0.15, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+  o2.connect(g2); g2.connect(audioCtx.destination); o2.start(); o2.stop(t + 0.1);
+}
+function loopHyper(w, h, cx, cy) {
+  ctx.fillStyle = 'rgba(2,11,24,0.15)';
+  ctx.fillRect(0, 0, w, h);
+
+  hue = (hue + 8) % 360;
+
+  trail.push({ x: ball.x, y: ball.y, hue, r: ballRadius });
+  if (trail.length > 120) trail.shift();
+
+  for (let i = 0; i < trail.length; i++) {
+    const t = trail[i], alpha = i / trail.length;
+    const flashHue = (t.hue + i * 25) % 360;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, Math.max(1, t.r * alpha), 0, Math.PI*2);
+    ctx.fillStyle = `hsla(${flashHue},100%,65%,${alpha * 0.8})`;
+    ctx.fill();
+  }
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, circleRadius, 0, Math.PI*2);
+  ctx.strokeStyle = `hsl(${hue},100%,60%)`;
+  ctx.lineWidth = 3; ctx.stroke();
+
+  const ballFlashHue = (hue * 3) % 360;
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
+  ctx.fillStyle = `hsl(${ballFlashHue},100%,70%)`; ctx.fill();
+  ctx.strokeStyle = `hsl(${(ballFlashHue + 120) % 360},100%,80%)`;
+  ctx.lineWidth = 2; ctx.stroke();
+
+  ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
+
+  const dx = ball.x - cx, dy = ball.y - cy;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  const maxDist = circleRadius - ballRadius;
+
+  if (dist >= maxDist) {
+    const nx = dx/dist, ny = dy/dist;
+    const dot = ball.vx*nx + ball.vy*ny;
+    ball.vx -= 2*dot*nx; ball.vy -= 2*dot*ny;
+    currentSpeed += SPEED_INCREMENT * 1.5;
+    const s = Math.sqrt(ball.vx*ball.vx + ball.vy*ball.vy);
+    ball.vx = ball.vx/s * currentSpeed; ball.vy = ball.vy/s * currentSpeed;
+    ball.x = cx + nx*(maxDist - 1); ball.y = cy + ny*(maxDist - 1);
+    bounces++; ballRadius = 10 + bounces * 1.4;
+    document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
+    playBounceHyperSfx(currentSpeed);
   }
 }
