@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chromatic</title>
+  <link href="style.css" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <div id="menuScreen" class="screen">
+      <div class="grid-bg"></div><div class="scanline"></div>
+      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+      <div class="status-bar">
+        <div class="status-dot"></div><div class="status-dot"></div><div class="status-dot"></div>
+        <span class="status-text">System Ready</span>
+      </div>
+      <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;">
+        <div class="logo-ring"><div class="logo-inner"><div class="logo-hex"></div></div></div>
+        <div class="game-title">Chromatic</div>
+        <div class="subtitle">Innovations of Bounce</div>
+        <div class="divider"></div>
+        <div class="btn-group">
+          <button class="btn primary" id="playBtn"><span class="btn-dot"></span>Play</button>
+          <button class="btn" id="settingsBtn"><span class="btn-dot"></span>Settings</button>
+        </div>
+      </div>
+      <div class="version-tag">v1.0.0</div>
+    </div>
+
+    <div id="modeScreen" class="screen hidden">
+      <div class="grid-bg"></div><div class="scanline"></div>
+      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+      <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;gap:24px;">
+        <div style="font-family:'Orbitron',sans-serif;font-size:13px;letter-spacing:6px;color:rgba(100,160,255,0.5);text-transform:uppercase;">Select Mode</div>
+        <button class="btn primary" id="chromaticModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Chromatic</button>
+        <button class="btn primary" id="originalModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Original</button>
+      </div>
+      <button class="back-btn" id="backBtn">Back</button>
+    </div>
+
+    <div id="gameScreen" class="screen hidden">
+      <canvas id="gameCanvas"></canvas>
+      <button class="back-btn" id="gameBackBtn">Menu</button>
+      <div class="mode-label" id="modeLabel">Chromatic Mode</div>
+      <div class="bounce-count" id="bounceCount">Bounces: 0</div>
+    </div>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
