@@ -64,6 +64,20 @@
       <button class="back-btn" id="gameBackBtn">Menu</button>
       <div class="mode-label" id="modeLabel">Chromatic Mode</div>
       <div class="bounce-count" id="bounceCount">Bounces: 0</div>
+      <button id="attrBtn" style="position:absolute;bottom:clamp(16px,3vh,28px);right:clamp(16px,3vw,28px);font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.5);color:#a0c4ff;text-transform:uppercase;clip-path:polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);z-index:10;">Attributes</button>
+
+<div id="attrMenu" style="display:none;position:absolute;top:50%;right:20px;transform:translateY(-50%);background:rgba(2,11,24,0.92);border:1px solid rgba(30,120,255,0.3);padding:20px;z-index:20;min-width:200px;display:none;flex-direction:column;gap:12px;">
+  <div style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:4px;color:rgba(100,160,255,0.6);text-transform:uppercase;margin-bottom:4px;">Attributes</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <span style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#a0c4ff;text-transform:uppercase;">Zen</span>
+    <button id="attrZen" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;">OFF</button>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <span style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#a0c4ff;text-transform:uppercase;">Mirror</span>
+    <button id="attrMirror" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;">OFF</button>
+  </div>
+  <button id="attrClose" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;padding:6px;cursor:pointer;border:1px solid rgba(30,120,255,0.3);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;margin-top:4px;">Close</button>
+</div>
     </div>
 
   </div>
