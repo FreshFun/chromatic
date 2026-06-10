@@ -1,5 +1,6 @@
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
+let particles = [];
+let novaPulse = 0;
 let attrZen = false;
 let attrMirror = false;
 let mirrorBall = {};
@@ -9,12 +10,10 @@ let musicEnabled = true;
 let musicNodes = null;
 let musicPlaying = false;
 let musicStarted = false;
-
 const GRAVITY_DEFAULT = 0.06;
 let GRAVITY = 0.06;
 const START_SPEED = 4.2;
 const SPEED_INCREMENT = 0.12;
-
 function updateAttrBtn(id, active) {
   const btn = document.getElementById(id);
   btn.style.color = active ? '#1e78ff' : '#a0c4ff';
@@ -22,11 +21,9 @@ function updateAttrBtn(id, active) {
   btn.style.background = active ? 'rgba(30,120,255,0.15)' : 'rgba(10,40,100,0.3)';
   btn.textContent = active ? 'ON' : 'OFF';
 }
-
 function spawnMirrorBall(w, h) {
   mirrorBall = { x: w/2, y: h/2, vx: -ball.vx, vy: ball.vy };
 }
-
 function playHoverSfx() {
   if (!sfxEnabled) return;
   const o = audioCtx.createOscillator(), g = audioCtx.createGain();
@@ -88,7 +85,27 @@ function playBounceHyperSfx(speed) {
   g2.gain.setValueAtTime(0.15, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
   o2.connect(g2); g2.connect(audioCtx.destination); o2.start(); o2.stop(t + 0.1);
 }
-
+function playBounceNovaSfx(speed) {
+  if (!sfxEnabled) return;
+  const t = audioCtx.currentTime;
+  const pitch = Math.min(1600, 350 + speed * 40);
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(pitch * 1.5, t);
+  o.frequency.exponentialRampToValueAtTime(pitch * 0.3, t + 0.2);
+  g.gain.setValueAtTime(0.25, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(t + 0.25);
+  const o2 = audioCtx.createOscillator(), g2 = audioCtx.createGain();
+  o2.type = 'sawtooth';
+  o2.frequency.setValueAtTime(pitch * 2, t);
+  o2.frequency.exponentialRampToValueAtTime(pitch * 0.1, t + 0.15);
+  g2.gain.setValueAtTime(0.18, t);
+  g2.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  o2.connect(g2); g2.connect(audioCtx.destination);
+  o2.start(); o2.stop(t + 0.18);
+}
 function startMusic() {
   if (musicPlaying || !musicEnabled) return;
   musicPlaying = true;
@@ -143,13 +160,10 @@ function startMusic() {
     }
   };
 }
-
 function stopMusic() {
   if (musicNodes && musicPlaying) musicNodes.stop();
 }
-
 document.querySelectorAll('.btn').forEach(b => b.addEventListener('mouseenter', playHoverSfx));
-
 const app = document.getElementById('app');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -158,11 +172,9 @@ const modeScreen = document.getElementById('modeScreen');
 const gameScreen = document.getElementById('gameScreen');
 const settingsScreen = document.getElementById('settingsScreen');
 const modeLabel = document.getElementById('modeLabel');
-
 let animId = null, bounces = 0, ball = {}, trail = [];
 let circleRadius = 0, ballRadius = 0, hue = 0, currentSpeed = 0;
 let currentMode = '';
-
 window.addEventListener('resize', () => {
   if (!gameScreen.classList.contains('hidden')) {
     canvas.width = window.innerWidth;
@@ -170,11 +182,9 @@ window.addEventListener('resize', () => {
     circleRadius = Math.min(canvas.width, canvas.height) * 0.38;
   }
 });
-
 document.getElementById('app').addEventListener('click', () => {
   if (!musicStarted) { musicStarted = true; startMusic(); }
 }, { once: true });
-
 document.getElementById('playBtn').addEventListener('click', () => {
   playClickSfx(); menuScreen.classList.add('hidden'); modeScreen.classList.remove('hidden');
 });
@@ -194,12 +204,12 @@ document.getElementById('gameBackBtn').addEventListener('click', () => {
   menuScreen.classList.remove('hidden');
   startMusic();
   attrMenuOpen = false;
-attrZen = false;
-attrMirror = false;
-GRAVITY = GRAVITY_DEFAULT;
-document.getElementById('attrMenu').style.display = 'none';
-updateAttrBtn('attrZen', false);
-updateAttrBtn('attrMirror', false);
+  attrZen = false;
+  attrMirror = false;
+  GRAVITY = GRAVITY_DEFAULT;
+  document.getElementById('attrMenu').style.display = 'none';
+  updateAttrBtn('attrZen', false);
+  updateAttrBtn('attrMirror', false);
 });
 document.getElementById('attrBtn').addEventListener('click', () => {
   playClickSfx();
@@ -261,8 +271,14 @@ document.getElementById('hyperModeBtn').addEventListener('click', () => {
   currentMode = 'hyper'; modeLabel.textContent = 'Hyper Mode';
   setTimeout(startGame, 50);
 });
-
+document.getElementById('novaModeBtn').addEventListener('click', () => {
+  playClickSfx(); stopMusic();
+  modeScreen.classList.add('hidden'); gameScreen.classList.remove('hidden');
+  currentMode = 'nova'; modeLabel.textContent = 'Nova Mode';
+  setTimeout(startGame, 50);
+});
 function startGame() {
+  particles = []; novaPulse = 0;
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
   const w = canvas.width, h = canvas.height;
@@ -276,20 +292,18 @@ function startGame() {
   if (animId) cancelAnimationFrame(animId);
   loop();
 }
-
 function stopGame() {
   if (animId) cancelAnimationFrame(animId);
   animId = null;
 }
-
 function loop() {
   const w = canvas.width, h = canvas.height, cx = w/2, cy = h/2;
   if (currentMode === 'chromatic') loopChromatic(w, h, cx, cy);
   else if (currentMode === 'original') loopOriginal(w, h, cx, cy);
   else if (currentMode === 'hyper') loopHyper(w, h, cx, cy);
+  else if (currentMode === 'nova') loopNova(w, h, cx, cy);
   animId = requestAnimationFrame(loop);
 }
-
 function handleMirror(cx, cy) {
   if (!attrMirror) return;
   mirrorBall.vy += GRAVITY;
@@ -317,7 +331,6 @@ function handleMirror(cx, cy) {
     mirrorBall.y = cy + mny*(mmaxDist - 1);
   }
 }
-
 function drawMirrorBall(hue) {
   if (!attrMirror) return;
   const mFlashHue = (hue + 180) % 360;
@@ -327,7 +340,6 @@ function drawMirrorBall(hue) {
   ctx.strokeStyle = `hsl(${(mFlashHue+60)%360},100%,80%)`;
   ctx.lineWidth = 2; ctx.stroke();
 }
-
 function loopChromatic(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.28)';
   ctx.fillRect(0, 0, w, h);
@@ -367,7 +379,6 @@ function loopChromatic(w, h, cx, cy) {
     playBounceSfx(currentSpeed);
   }
 }
-
 function loopOriginal(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.05)';
   ctx.fillRect(0, 0, w, h);
@@ -408,7 +419,6 @@ function loopOriginal(w, h, cx, cy) {
     playBounceOriginalSfx(currentSpeed);
   }
 }
-
 function loopHyper(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.15)';
   ctx.fillRect(0, 0, w, h);
@@ -450,5 +460,86 @@ function loopHyper(w, h, cx, cy) {
     bounces++; ballRadius = 10 + bounces * 1.4;
     document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
     playBounceHyperSfx(currentSpeed);
+  }
+}
+function spawnParticles(x, y, h, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i + Math.random() * 0.5;
+    const speed = 2 + Math.random() * 5;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      hue: (h + Math.random() * 60 - 30 + 360) % 360,
+      life: 1.0,
+      r: 2 + Math.random() * 3
+    });
+  }
+}
+function loopNova(w, h, cx, cy) {
+  ctx.fillStyle = 'rgba(2,11,24,0.22)';
+  ctx.fillRect(0, 0, w, h);
+  hue = (hue + 2.5) % 360;
+  // particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.94; p.vy *= 0.94;
+    p.life -= 0.025;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${p.hue},100%,65%,${p.life * 0.9})`;
+    ctx.fill();
+  }
+  // trail
+  trail.push({ x: ball.x, y: ball.y, hue, r: ballRadius });
+  if (trail.length > 80) trail.shift();
+  for (let i = 0; i < trail.length; i++) {
+    const t = trail[i], alpha = i / trail.length;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, Math.max(1, t.r * alpha * 0.6), 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${t.hue},100%,65%,${alpha * 0.7})`;
+    ctx.fill();
+  }
+  // ring with pulse glow
+  novaPulse = Math.max(0, novaPulse - 0.04);
+  ctx.save();
+  ctx.shadowColor = `hsl(${hue},100%,60%)`;
+  ctx.shadowBlur = 3 + novaPulse * 20;
+  ctx.beginPath();
+  ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `hsl(${hue},90%,60%)`;
+  ctx.lineWidth = 2 + novaPulse * 3; ctx.stroke();
+  ctx.restore();
+  // ball
+  ctx.save();
+  ctx.shadowColor = `hsl(${hue},100%,70%)`;
+  ctx.shadowBlur = 15 + novaPulse * 10;
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.fillStyle = `hsl(${hue},100%,72%)`; ctx.fill();
+  ctx.restore();
+  drawMirrorBall(hue);
+  handleMirror(cx, cy);
+  ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
+  const dx = ball.x - cx, dy = ball.y - cy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const maxDist = circleRadius - ballRadius;
+  if (dist >= maxDist) {
+    const nx = dx / dist, ny = dy / dist;
+    const dot = ball.vx * nx + ball.vy * ny;
+    ball.vx -= 2 * dot * nx; ball.vy -= 2 * dot * ny;
+    currentSpeed += SPEED_INCREMENT;
+    const s = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+    ball.vx = ball.vx / s * currentSpeed; ball.vy = ball.vy / s * currentSpeed;
+    ball.x = cx + nx * (maxDist - 1); ball.y = cy + ny * (maxDist - 1);
+    bounces++; ballRadius = 10 + bounces * 1.4;
+    document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
+    spawnParticles(ball.x, ball.y, hue, 18);
+    novaPulse = 1.0;
+    playBounceNovaSfx(currentSpeed);
+    app.classList.add('shake');
+    setTimeout(() => app.classList.remove('shake'), 120);
   }
 }
