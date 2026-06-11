@@ -9,6 +9,7 @@
 <body>
   <div id="app">
 
+    <!-- MENU -->
     <div id="menuScreen" class="screen">
       <div class="grid-bg"></div><div class="scanline"></div>
       <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
@@ -30,20 +31,18 @@
       <div class="version-tag">v1.0.0</div>
     </div>
 
+    <!-- PLAY SCREEN (mode select replaced by single sandbox button) -->
     <div id="modeScreen" class="screen hidden">
       <div class="grid-bg"></div><div class="scanline"></div>
       <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
       <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;gap:24px;">
         <div style="font-family:'Orbitron',sans-serif;font-size:13px;letter-spacing:6px;color:rgba(100,160,255,0.5);text-transform:uppercase;">Select Mode</div>
-        <button class="btn primary" id="chromaticModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Chromatic</button>
-        <button class="btn primary" id="originalModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Original</button>
-        <button class="btn primary" id="hyperModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Hyper</button>
-        <button class="btn primary" id="novaModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Nova</button>
-        <button class="btn primary" id="sparkyModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Sparky</button>
+        <button class="btn primary" id="sandboxModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Sandbox</button>
       </div>
       <button class="back-btn" id="backBtn">Back</button>
     </div>
 
+    <!-- SETTINGS -->
     <div id="settingsScreen" class="screen hidden">
       <div class="grid-bg"></div><div class="scanline"></div>
       <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
@@ -63,23 +62,20 @@
       <button class="back-btn" id="settingsBackBtn">Back</button>
     </div>
 
-    <!-- SHOP SCREEN -->
+    <!-- SHOP -->
     <div id="shopScreen" class="screen hidden">
       <div class="grid-bg"></div><div class="scanline"></div>
       <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-
-      <!-- Scanline overlay for shop feel -->
       <div class="shop-scanline-overlay"></div>
 
-      <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;gap:28px;width:100%;max-width:480px;padding:0 24px;">
+      <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;width:100%;max-width:500px;padding:0 20px;gap:20px;">
 
-        <!-- Header -->
+        <!-- Header + balance -->
         <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
           <div class="shop-title-label">SHOP</div>
           <div class="shop-divider"></div>
         </div>
 
-        <!-- Bounce balance -->
         <div class="shop-balance-card">
           <div class="shop-balance-icon">◈</div>
           <div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
@@ -89,33 +85,24 @@
           <div class="shop-balance-subtext">your currency</div>
         </div>
 
-        <!-- Coming soon placeholder -->
-        <div class="shop-empty-state">
-          <div class="shop-empty-icon">
-            <div class="shop-empty-ring"></div>
-            <span>?</span>
-          </div>
-          <div class="shop-empty-title">Items Coming Soon</div>
-          <div class="shop-empty-desc">Keep bouncing to earn currency.<br>New items drop with each update.</div>
-          <div class="shop-empty-dots">
-            <span></span><span></span><span></span>
-          </div>
+        <!-- Trail items list -->
+        <div style="display:flex;flex-direction:column;gap:10px;width:100%;overflow-y:auto;max-height:55vh;padding-right:2px;" id="shopItemsList">
+          <!-- injected by JS -->
         </div>
-
       </div>
 
       <button class="back-btn" id="shopBackBtn">Back</button>
     </div>
 
+    <!-- GAME -->
     <div id="gameScreen" class="screen hidden">
       <canvas id="gameCanvas"></canvas>
       <button class="back-btn" id="gameBackBtn">Menu</button>
-      <div class="mode-label" id="modeLabel">Chromatic Mode</div>
+      <div class="mode-label" id="modeLabel">Sandbox</div>
       <div class="bounce-count" id="bounceCount">Bounces: 0</div>
       <div class="session-total" id="sessionTotal">Total: 0</div>
       <button id="attrBtn" style="position:absolute;bottom:clamp(16px,3vh,28px);right:clamp(16px,3vw,28px);font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.5);color:#a0c4ff;text-transform:uppercase;clip-path:polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);z-index:10;">Attributes</button>
-
-      <div id="attrMenu" style="display:none;position:absolute;top:50%;right:20px;transform:translateY(-50%);background:rgba(2,11,24,0.92);border:1px solid rgba(30,120,255,0.3);padding:20px;z-index:20;min-width:200px;display:none;flex-direction:column;gap:12px;">
+      <div id="attrMenu" style="display:none;position:absolute;top:50%;right:20px;transform:translateY(-50%);background:rgba(2,11,24,0.92);border:1px solid rgba(30,120,255,0.3);padding:20px;z-index:20;min-width:200px;flex-direction:column;gap:12px;">
         <div style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:4px;color:rgba(100,160,255,0.6);text-transform:uppercase;margin-bottom:4px;">Attributes</div>
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <span style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#a0c4ff;text-transform:uppercase;">Zen</span>
