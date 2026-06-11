@@ -106,6 +106,88 @@ function playBounceNovaSfx(speed) {
   o2.connect(g2); g2.connect(audioCtx.destination);
   o2.start(); o2.stop(t + 0.18);
 }
+function playBounceSparkySfx(speed) {
+  if (!sfxEnabled) return;
+  const t = audioCtx.currentTime;
+  const pitch = Math.min(1800, 500 + speed * 35);
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = 'square';
+  o.frequency.setValueAtTime(pitch, t);
+  o.frequency.exponentialRampToValueAtTime(pitch * 0.2, t + 0.08);
+  g.gain.setValueAtTime(0.22, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(t + 0.1);
+  const o2 = audioCtx.createOscillator(), g2 = audioCtx.createGain();
+  o2.type = 'sawtooth';
+  o2.frequency.setValueAtTime(pitch * 2.5, t);
+  o2.frequency.exponentialRampToValueAtTime(pitch * 0.3, t + 0.06);
+  g2.gain.setValueAtTime(0.15, t);
+  g2.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+  o2.connect(g2); g2.connect(audioCtx.destination);
+  o2.start(); o2.stop(t + 0.08);
+}
+function loopSparky(w, h, cx, cy) {
+  ctx.fillStyle = 'rgba(2,11,24,0.2)';
+  ctx.fillRect(0, 0, w, h);
+  
+  trail.push({ x: ball.x, y: ball.y, r: ballRadius });
+  if (trail.length > 60) trail.shift();
+  
+  for (let i = 0; i < trail.length; i++) {
+    const t = trail[i];
+    const alpha = i / trail.length;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(200,100%,60%,${alpha * 0.7})`;
+    ctx.fill();
+    ctx.strokeStyle = `hsla(200,100%,80%,${alpha * 0.9})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  
+  ctx.beginPath();
+  ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = '#0066ff';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.fillStyle = '#0052cc';
+  ctx.fill();
+  ctx.strokeStyle = '#00ccff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  
+  drawMirrorBall(200);
+  handleMirror(cx, cy);
+  
+  ball.vy += GRAVITY;
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+  
+  const dx = ball.x - cx, dy = ball.y - cy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const maxDist = circleRadius - ballRadius;
+  
+  if (dist >= maxDist) {
+    const nx = dx / dist, ny = dy / dist;
+    const dot = ball.vx * nx + ball.vy * ny;
+    ball.vx -= 2 * dot * nx;
+    ball.vy -= 2 * dot * ny;
+    currentSpeed += SPEED_INCREMENT;
+    const s = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+    ball.vx = ball.vx / s * currentSpeed;
+    ball.vy = ball.vy / s * currentSpeed;
+    ball.x = cx + nx * (maxDist - 1);
+    ball.y = cy + ny * (maxDist - 1);
+    bounces++;
+    ballRadius = 10 + bounces * 1.4;
+    document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
+    playBounceSparkySfx(currentSpeed);
+  }
+}
 function startMusic() {
   if (musicPlaying || !musicEnabled) return;
   musicPlaying = true;
@@ -277,6 +359,12 @@ document.getElementById('novaModeBtn').addEventListener('click', () => {
   currentMode = 'nova'; modeLabel.textContent = 'Nova Mode';
   setTimeout(startGame, 50);
 });
+document.getElementById('sparkyModeBtn').addEventListener('click', () => {
+  playClickSfx(); stopMusic();
+  modeScreen.classList.add('hidden'); gameScreen.classList.remove('hidden');
+  currentMode = 'sparky'; modeLabel.textContent = 'Sparky Mode';
+  setTimeout(startGame, 50);
+});
 function startGame() {
   particles = []; novaPulse = 0;
   canvas.width = window.innerWidth;
@@ -302,6 +390,7 @@ function loop() {
   else if (currentMode === 'original') loopOriginal(w, h, cx, cy);
   else if (currentMode === 'hyper') loopHyper(w, h, cx, cy);
   else if (currentMode === 'nova') loopNova(w, h, cx, cy);
+else if (currentMode === 'sparky') loopSparky(w, h, cx, cy);
   animId = requestAnimationFrame(loop);
 }
 function handleMirror(cx, cy) {
