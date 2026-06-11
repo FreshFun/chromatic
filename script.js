@@ -10,10 +10,27 @@ let musicEnabled = true;
 let musicNodes = null;
 let musicPlaying = false;
 let musicStarted = false;
+let currentMusicType = ''; // 'menu' or 'shop'
 const GRAVITY_DEFAULT = 0.06;
 let GRAVITY = 0.06;
 const START_SPEED = 4.2;
 const SPEED_INCREMENT = 0.12;
+
+// ── PERSISTENT BOUNCE SAVE ────────────────────────────────
+function loadTotalBounces() {
+  try { return parseInt(localStorage.getItem('chromatic_total_bounces') || '0', 10); } catch(e) { return 0; }
+}
+function saveTotalBounces(n) {
+  try { localStorage.setItem('chromatic_total_bounces', String(n)); } catch(e) {}
+}
+let totalBounces = loadTotalBounces();
+
+function addBounces(n) {
+  totalBounces += n;
+  saveTotalBounces(totalBounces);
+}
+
+// ── ATTR HELPERS ──────────────────────────────────────────
 function updateAttrBtn(id, active) {
   const btn = document.getElementById(id);
   btn.style.color = active ? '#1e78ff' : '#a0c4ff';
@@ -24,6 +41,8 @@ function updateAttrBtn(id, active) {
 function spawnMirrorBall(w, h) {
   mirrorBall = { x: w/2, y: h/2, vx: -ball.vx, vy: ball.vy };
 }
+
+// ── SFX ───────────────────────────────────────────────────
 function playHoverSfx() {
   if (!sfxEnabled) return;
   const o = audioCtx.createOscillator(), g = audioCtx.createGain();
@@ -127,70 +146,12 @@ function playBounceSparkySfx(speed) {
   o2.connect(g2); g2.connect(audioCtx.destination);
   o2.start(); o2.stop(t + 0.08);
 }
-function loopSparky(w, h, cx, cy) {
-  ctx.fillStyle = 'rgba(2,11,24,0.2)';
-  ctx.fillRect(0, 0, w, h);
-  
-  trail.push({ x: ball.x, y: ball.y, r: ballRadius });
-  if (trail.length > 60) trail.shift();
-  
-  for (let i = 0; i < trail.length; i++) {
-    const t = trail[i];
-    const alpha = i / trail.length;
-    ctx.beginPath();
-    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
-    ctx.fillStyle = `hsla(200,100%,60%,${alpha * 0.7})`;
-    ctx.fill();
-    ctx.strokeStyle = `hsla(200,100%,80%,${alpha * 0.9})`;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  }
-  
-  ctx.beginPath();
-  ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
-  ctx.strokeStyle = '#0066ff';
-  ctx.lineWidth = 2.5;
-  ctx.stroke();
-  
-  ctx.beginPath();
-  ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
-  ctx.fillStyle = '#0052cc';
-  ctx.fill();
-  ctx.strokeStyle = '#00ccff';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  
-  drawMirrorBall(200);
-  handleMirror(cx, cy);
-  
-  ball.vy += GRAVITY;
-  ball.x += ball.vx;
-  ball.y += ball.vy;
-  
-  const dx = ball.x - cx, dy = ball.y - cy;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  const maxDist = circleRadius - ballRadius;
-  
-  if (dist >= maxDist) {
-    const nx = dx / dist, ny = dy / dist;
-    const dot = ball.vx * nx + ball.vy * ny;
-    ball.vx -= 2 * dot * nx;
-    ball.vy -= 2 * dot * ny;
-    currentSpeed += SPEED_INCREMENT;
-    const s = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
-    ball.vx = ball.vx / s * currentSpeed;
-    ball.vy = ball.vy / s * currentSpeed;
-    ball.x = cx + nx * (maxDist - 1);
-    ball.y = cy + ny * (maxDist - 1);
-    bounces++;
-    ballRadius = 10 + bounces * 1.4;
-    document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
-    playBounceSparkySfx(currentSpeed);
-  }
-}
+
+// ── MENU MUSIC ────────────────────────────────────────────
 function startMusic() {
   if (musicPlaying || !musicEnabled) return;
   musicPlaying = true;
+  currentMusicType = 'menu';
   const master = audioCtx.createGain();
   master.gain.setValueAtTime(0, audioCtx.currentTime);
   master.gain.linearRampToValueAtTime(0.18, audioCtx.currentTime + 2);
@@ -238,13 +199,166 @@ function startMusic() {
         try { bass.stop(); bass2.stop(); pad.stop(); pad2.stop(); } catch(e) {}
         musicPlaying = false;
         musicNodes = null;
+        currentMusicType = '';
       }, 1400);
     }
   };
 }
+
+// ── SHOP MUSIC ────────────────────────────────────────────
+// Slower, more mysterious — lower bass drone, slower arp, choir-like pads
+function startShopMusic() {
+  if (musicPlaying || !musicEnabled) return;
+  musicPlaying = true;
+  currentMusicType = 'shop';
+  const master = audioCtx.createGain();
+  master.gain.setValueAtTime(0, audioCtx.currentTime);
+  master.gain.linearRampToValueAtTime(0.16, audioCtx.currentTime + 2.5);
+  master.connect(audioCtx.destination);
+
+  // Reverb-style delay
+  const delay = audioCtx.createDelay(2.0);
+  delay.delayTime.value = 0.75;
+  const delayGain = audioCtx.createGain();
+  delayGain.gain.value = 0.28;
+  delay.connect(delayGain); delayGain.connect(delay); delayGain.connect(master);
+
+  // Deep sub bass drone
+  const sub = audioCtx.createOscillator(), subGain = audioCtx.createGain();
+  sub.type = 'sine'; sub.frequency.value = 41.2; subGain.gain.value = 0.6;
+  sub.connect(subGain); subGain.connect(master); sub.start();
+
+  // Mid bass
+  const mid = audioCtx.createOscillator(), midGain = audioCtx.createGain();
+  mid.type = 'triangle'; mid.frequency.value = 82.4; midGain.gain.value = 0.15;
+  mid.connect(midGain); midGain.connect(master); mid.start();
+
+  // Pad chord – mysterious tritone-ish
+  const p1 = audioCtx.createOscillator(), p1g = audioCtx.createGain();
+  p1.type = 'sine'; p1.frequency.value = 130.8; p1g.gain.value = 0.10;
+  p1.connect(p1g); p1g.connect(master); p1.start();
+
+  const p2 = audioCtx.createOscillator(), p2g = audioCtx.createGain();
+  p2.type = 'sine'; p2.frequency.value = 185.0; p2g.gain.value = 0.07;
+  p2.connect(p2g); p2g.connect(master); p2.start();
+
+  const p3 = audioCtx.createOscillator(), p3g = audioCtx.createGain();
+  p3.type = 'sine'; p3.frequency.value = 246.9; p3g.gain.value = 0.05;
+  p3.connect(p3g); p3g.connect(master); p3.start();
+
+  // Slow ethereal arp – pentatonic, spaced out
+  const shopArpNotes = [130.8, 164.8, 196.0, 246.9, 261.6, 196.0, 164.8, 130.8];
+  const shopArpInterval = 0.55;
+  let arpStep = 0, arpActive = true, arpTimer = null;
+  function playShopArpNote() {
+    if (!arpActive) return;
+    const freq = shopArpNotes[arpStep % shopArpNotes.length];
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.18, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + shopArpInterval * 1.6);
+    o.connect(g); g.connect(delay); g.connect(master);
+    o.start(); o.stop(audioCtx.currentTime + shopArpInterval * 1.6);
+    arpStep++;
+    arpTimer = setTimeout(playShopArpNote, shopArpInterval * 1000);
+  }
+  arpTimer = setTimeout(playShopArpNote, 1200);
+
+  // Slow LFO shimmer on sub
+  let shimmerStep = 0;
+  const shimmerInterval = setInterval(() => {
+    if (!arpActive) { clearInterval(shimmerInterval); return; }
+    const lfoVal = 0.55 + Math.sin(shimmerStep * 0.18) * 0.12;
+    subGain.gain.setValueAtTime(lfoVal, audioCtx.currentTime);
+    shimmerStep++;
+  }, 80);
+
+  musicNodes = {
+    stop: () => {
+      arpActive = false;
+      clearTimeout(arpTimer);
+      clearInterval(shimmerInterval);
+      master.gain.setValueAtTime(master.gain.value, audioCtx.currentTime);
+      master.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.5);
+      setTimeout(() => {
+        try { sub.stop(); mid.stop(); p1.stop(); p2.stop(); p3.stop(); } catch(e) {}
+        musicPlaying = false;
+        musicNodes = null;
+        currentMusicType = '';
+      }, 1700);
+    }
+  };
+}
+
 function stopMusic() {
   if (musicNodes && musicPlaying) musicNodes.stop();
 }
+
+// ── GAME LOOP FUNCTIONS ───────────────────────────────────
+function loopSparky(w, h, cx, cy) {
+  ctx.fillStyle = 'rgba(2,11,24,0.2)';
+  ctx.fillRect(0, 0, w, h);
+
+  trail.push({ x: ball.x, y: ball.y, r: ballRadius });
+  if (trail.length > 60) trail.shift();
+
+  for (let i = 0; i < trail.length; i++) {
+    const t = trail[i];
+    const alpha = i / trail.length;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(200,100%,60%,${alpha * 0.7})`;
+    ctx.fill();
+    ctx.strokeStyle = `hsla(200,100%,80%,${alpha * 0.9})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = '#0066ff';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.fillStyle = '#0052cc';
+  ctx.fill();
+  ctx.strokeStyle = '#00ccff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  drawMirrorBall(200);
+  handleMirror(cx, cy);
+
+  ball.vy += GRAVITY;
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  const dx = ball.x - cx, dy = ball.y - cy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const maxDist = circleRadius - ballRadius;
+
+  if (dist >= maxDist) {
+    const nx = dx / dist, ny = dy / dist;
+    const dot = ball.vx * nx + ball.vy * ny;
+    ball.vx -= 2 * dot * nx;
+    ball.vy -= 2 * dot * ny;
+    currentSpeed += SPEED_INCREMENT;
+    const s = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+    ball.vx = ball.vx / s * currentSpeed;
+    ball.vy = ball.vy / s * currentSpeed;
+    ball.x = cx + nx * (maxDist - 1);
+    ball.y = cy + ny * (maxDist - 1);
+    bounces++;
+    addBounces(1);
+    updateSessionTotalDisplay();
+    ballRadius = 10 + bounces * 1.4;
+    document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
+    playBounceSparkySfx(currentSpeed);
+  }
+}
+
 document.querySelectorAll('.btn').forEach(b => b.addEventListener('mouseenter', playHoverSfx));
 const app = document.getElementById('app');
 const canvas = document.getElementById('gameCanvas');
@@ -253,10 +367,16 @@ const menuScreen = document.getElementById('menuScreen');
 const modeScreen = document.getElementById('modeScreen');
 const gameScreen = document.getElementById('gameScreen');
 const settingsScreen = document.getElementById('settingsScreen');
+const shopScreen = document.getElementById('shopScreen');
 const modeLabel = document.getElementById('modeLabel');
 let animId = null, bounces = 0, ball = {}, trail = [];
 let circleRadius = 0, ballRadius = 0, hue = 0, currentSpeed = 0;
 let currentMode = '';
+
+function updateSessionTotalDisplay() {
+  document.getElementById('sessionTotal').textContent = `Total: ${totalBounces}`;
+}
+
 window.addEventListener('resize', () => {
   if (!gameScreen.classList.contains('hidden')) {
     canvas.width = window.innerWidth;
@@ -264,9 +384,12 @@ window.addEventListener('resize', () => {
     circleRadius = Math.min(canvas.width, canvas.height) * 0.38;
   }
 });
+
 document.getElementById('app').addEventListener('click', () => {
   if (!musicStarted) { musicStarted = true; startMusic(); }
 }, { once: true });
+
+// ── NAVIGATION ────────────────────────────────────────────
 document.getElementById('playBtn').addEventListener('click', () => {
   playClickSfx(); menuScreen.classList.add('hidden'); modeScreen.classList.remove('hidden');
 });
@@ -279,6 +402,30 @@ document.getElementById('settingsBackBtn').addEventListener('click', () => {
 document.getElementById('backBtn').addEventListener('click', () => {
   playClickSfx(); modeScreen.classList.add('hidden'); menuScreen.classList.remove('hidden');
 });
+
+// Shop navigation
+document.getElementById('shopBtn').addEventListener('click', () => {
+  playClickSfx();
+  menuScreen.classList.add('hidden');
+  shopScreen.classList.remove('hidden');
+  document.getElementById('shopBounceDisplay').textContent = totalBounces.toLocaleString();
+  // Switch to shop music
+  if (musicEnabled && musicStarted) {
+    stopMusic();
+    setTimeout(() => { startShopMusic(); }, 600);
+  }
+});
+document.getElementById('shopBackBtn').addEventListener('click', () => {
+  playClickSfx();
+  shopScreen.classList.add('hidden');
+  menuScreen.classList.remove('hidden');
+  // Switch back to menu music
+  if (musicEnabled && musicStarted) {
+    stopMusic();
+    setTimeout(() => { startMusic(); }, 600);
+  }
+});
+
 document.getElementById('gameBackBtn').addEventListener('click', () => {
   playClickSfx();
   stopGame();
@@ -293,6 +440,7 @@ document.getElementById('gameBackBtn').addEventListener('click', () => {
   updateAttrBtn('attrZen', false);
   updateAttrBtn('attrMirror', false);
 });
+
 document.getElementById('attrBtn').addEventListener('click', () => {
   playClickSfx();
   const menu = document.getElementById('attrMenu');
@@ -335,6 +483,8 @@ document.getElementById('musicToggle').addEventListener('click', () => {
   if (musicEnabled) { startMusic(); } else { stopMusic(); }
   playClickSfx();
 });
+
+// ── MODE BUTTONS ──────────────────────────────────────────
 document.getElementById('chromaticModeBtn').addEventListener('click', () => {
   playClickSfx(); stopMusic();
   modeScreen.classList.add('hidden'); gameScreen.classList.remove('hidden');
@@ -365,6 +515,8 @@ document.getElementById('sparkyModeBtn').addEventListener('click', () => {
   currentMode = 'sparky'; modeLabel.textContent = 'Sparky Mode';
   setTimeout(startGame, 50);
 });
+
+// ── GAME CORE ─────────────────────────────────────────────
 function startGame() {
   particles = []; novaPulse = 0;
   canvas.width = window.innerWidth;
@@ -374,6 +526,7 @@ function startGame() {
   ballRadius = 10; bounces = 0; trail = []; hue = 0;
   currentSpeed = START_SPEED;
   document.getElementById('bounceCount').textContent = 'Bounces: 0';
+  updateSessionTotalDisplay();
   const angle = (Math.random() - 0.5) * 1.0 - Math.PI / 2;
   ball = { x: w/2, y: h/2, vx: Math.cos(angle) * currentSpeed, vy: Math.sin(angle) * currentSpeed };
   if (attrMirror) spawnMirrorBall(w, h);
@@ -390,9 +543,10 @@ function loop() {
   else if (currentMode === 'original') loopOriginal(w, h, cx, cy);
   else if (currentMode === 'hyper') loopHyper(w, h, cx, cy);
   else if (currentMode === 'nova') loopNova(w, h, cx, cy);
-else if (currentMode === 'sparky') loopSparky(w, h, cx, cy);
+  else if (currentMode === 'sparky') loopSparky(w, h, cx, cy);
   animId = requestAnimationFrame(loop);
 }
+
 function handleMirror(cx, cy) {
   if (!attrMirror) return;
   mirrorBall.vy += GRAVITY;
@@ -429,6 +583,8 @@ function drawMirrorBall(hue) {
   ctx.strokeStyle = `hsl(${(mFlashHue+60)%360},100%,80%)`;
   ctx.lineWidth = 2; ctx.stroke();
 }
+
+// ── GAME MODES ────────────────────────────────────────────
 function loopChromatic(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.28)';
   ctx.fillRect(0, 0, w, h);
@@ -463,7 +619,8 @@ function loopChromatic(w, h, cx, cy) {
     const s = Math.sqrt(ball.vx*ball.vx + ball.vy*ball.vy);
     ball.vx = ball.vx/s * currentSpeed; ball.vy = ball.vy/s * currentSpeed;
     ball.x = cx + nx*(maxDist - 1); ball.y = cy + ny*(maxDist - 1);
-    bounces++; ballRadius = 10 + bounces * 1.4;
+    bounces++; addBounces(1); updateSessionTotalDisplay();
+    ballRadius = 10 + bounces * 1.4;
     document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
     playBounceSfx(currentSpeed);
   }
@@ -503,7 +660,8 @@ function loopOriginal(w, h, cx, cy) {
     const s = Math.sqrt(ball.vx*ball.vx + ball.vy*ball.vy);
     ball.vx = ball.vx/s * currentSpeed; ball.vy = ball.vy/s * currentSpeed;
     ball.x = cx + nx*(maxDist - 1); ball.y = cy + ny*(maxDist - 1);
-    bounces++; ballRadius = 10 + bounces * 1.4;
+    bounces++; addBounces(1); updateSessionTotalDisplay();
+    ballRadius = 10 + bounces * 1.4;
     document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
     playBounceOriginalSfx(currentSpeed);
   }
@@ -546,7 +704,8 @@ function loopHyper(w, h, cx, cy) {
     const s = Math.sqrt(ball.vx*ball.vx + ball.vy*ball.vy);
     ball.vx = ball.vx/s * currentSpeed; ball.vy = ball.vy/s * currentSpeed;
     ball.x = cx + nx*(maxDist - 1); ball.y = cy + ny*(maxDist - 1);
-    bounces++; ballRadius = 10 + bounces * 1.4;
+    bounces++; addBounces(1); updateSessionTotalDisplay();
+    ballRadius = 10 + bounces * 1.4;
     document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
     playBounceHyperSfx(currentSpeed);
   }
@@ -569,7 +728,6 @@ function loopNova(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.22)';
   ctx.fillRect(0, 0, w, h);
   hue = (hue + 2.5) % 360;
-  // particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
     p.x += p.vx; p.y += p.vy;
@@ -581,7 +739,6 @@ function loopNova(w, h, cx, cy) {
     ctx.fillStyle = `hsla(${p.hue},100%,65%,${p.life * 0.9})`;
     ctx.fill();
   }
-  // trail
   trail.push({ x: ball.x, y: ball.y, hue, r: ballRadius });
   if (trail.length > 80) trail.shift();
   for (let i = 0; i < trail.length; i++) {
@@ -591,7 +748,6 @@ function loopNova(w, h, cx, cy) {
     ctx.fillStyle = `hsla(${t.hue},100%,65%,${alpha * 0.7})`;
     ctx.fill();
   }
-  // ring with pulse glow
   novaPulse = Math.max(0, novaPulse - 0.04);
   ctx.save();
   ctx.shadowColor = `hsl(${hue},100%,60%)`;
@@ -601,7 +757,6 @@ function loopNova(w, h, cx, cy) {
   ctx.strokeStyle = `hsl(${hue},90%,60%)`;
   ctx.lineWidth = 2 + novaPulse * 3; ctx.stroke();
   ctx.restore();
-  // ball
   ctx.save();
   ctx.shadowColor = `hsl(${hue},100%,70%)`;
   ctx.shadowBlur = 15 + novaPulse * 10;
@@ -623,7 +778,8 @@ function loopNova(w, h, cx, cy) {
     const s = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
     ball.vx = ball.vx / s * currentSpeed; ball.vy = ball.vy / s * currentSpeed;
     ball.x = cx + nx * (maxDist - 1); ball.y = cy + ny * (maxDist - 1);
-    bounces++; ballRadius = 10 + bounces * 1.4;
+    bounces++; addBounces(1); updateSessionTotalDisplay();
+    ballRadius = 10 + bounces * 1.4;
     document.getElementById('bounceCount').textContent = `Bounces: ${bounces}`;
     spawnParticles(ball.x, ball.y, hue, 18);
     novaPulse = 1.0;
