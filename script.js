@@ -36,7 +36,7 @@ function saveEquipped(id) {
   try { localStorage.setItem('chromatic_equipped', id); } catch(e) {}
 }
 
-  let totalBounces = loadTotalBounces();
+let totalBounces = loadTotalBounces();
 let ownedTrails = loadOwned();
 let equippedTrail = loadEquipped();
 
@@ -581,17 +581,17 @@ document.getElementById('shopBtn').addEventListener('click', () => {
   menuScreen.classList.add('hidden');
   shopScreen.classList.remove('hidden');
   renderShop();
+  if (musicEnabled && musicStarted) { stopMusic(); setTimeout(() => startShopMusic(), 1800); }
 });
-  
 document.getElementById('shopBackBtn').addEventListener('click', () => {
   playClickSfx();
   shopScreen.classList.add('hidden');
   menuScreen.classList.remove('hidden');
+  if (musicEnabled && musicStarted) { stopMusic(); setTimeout(() => startMusic(), 1800); }
 });
 document.getElementById('gameBackBtn').addEventListener('click', () => {
   playClickSfx(); stopGame();
   gameScreen.classList.add('hidden'); menuScreen.classList.remove('hidden');
-  startMusic();
   attrMenuOpen = false; attrZen = false; attrMirror = false; GRAVITY = GRAVITY_DEFAULT;
   document.getElementById('attrMenu').style.display = 'none';
   updateAttrBtn('attrZen', false); updateAttrBtn('attrMirror', false);
@@ -632,7 +632,7 @@ document.getElementById('musicToggle').addEventListener('click', () => {
   btn.style.color = musicEnabled ? '#1e78ff' : '#a0c4ff';
   btn.style.borderColor = musicEnabled ? 'rgba(30,120,255,0.6)' : 'rgba(30,120,255,0.2)';
   btn.style.background = musicEnabled ? 'rgba(30,120,255,0.15)' : 'rgba(10,40,100,0.2)';
-  if (musicEnabled) { startMusic(); } else { stopMusic(); }
+  if (!musicEnabled) { stopMusic(); }
   playClickSfx();
 });
 
