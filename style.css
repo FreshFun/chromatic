@@ -1,6 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap');
 * { margin:0;padding:0;box-sizing:border-box; }
-html, body { width:100%;height:100%;overflow:hidden; }
+html, body { width:100%;height:100%;overflow:hidden;background:#020b18; }
 #app { background:#020b18;width:100%;height:100vh;overflow:hidden;position:relative;font-family:'Rajdhani',sans-serif; }
 .screen { position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;transition:opacity 0.3s; }
 .screen.hidden { opacity:0;pointer-events:none; }
