@@ -553,6 +553,7 @@ document.getElementById('gameBackBtn').addEventListener('click', () => {
   attrMenuOpen = false; attrZen = false; attrMirror = false; GRAVITY = GRAVITY_DEFAULT;
   document.getElementById('attrMenu').style.display = 'none';
   updateAttrBtn('attrZen', false); updateAttrBtn('attrMirror', false);
+  if (musicEnabled && musicStarted) startMusic();
 });
 document.getElementById('attrBtn').addEventListener('click', () => {
   playClickSfx();
