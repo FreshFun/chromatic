@@ -65,7 +65,7 @@ const TRAILS = [
     id: 'original',
     name: 'Original',
     desc: 'Colourful ink that never fades',
-    price: 800,
+    price: 500,
     previewBg: 'linear-gradient(135deg,#ff006680,#ffaa0080)',
     previewBorder: 'rgba(255,180,0,0.6)',
     previewDot: '#ffcc00'
@@ -74,7 +74,7 @@ const TRAILS = [
     id: 'sparky',
     name: 'Sparky',
     desc: 'Electric blue streak',
-    price: 1500,
+    price: 800,
     previewBg: 'linear-gradient(135deg,#0044cc80,#00ccff80)',
     previewBorder: 'rgba(0,200,255,0.6)',
     previewDot: '#00ccff'
@@ -83,7 +83,7 @@ const TRAILS = [
     id: 'chromatic',
     name: 'Chromatic',
     desc: 'Full spectrum rainbow trail',
-    price: 3200,
+    price: 1300,
     previewBg: 'linear-gradient(135deg,#ff000080,#00ff0080,#0000ff80)',
     previewBorder: 'rgba(180,100,255,0.6)',
     previewDot: '#cc44ff'
@@ -92,7 +92,7 @@ const TRAILS = [
     id: 'hyper',
     name: 'Hyper',
     desc: 'Rapid colour-flashing chaos',
-    price: 6000,
+    price: 2800,
     previewBg: 'linear-gradient(135deg,#ff440080,#ff00ff80)',
     previewBorder: 'rgba(255,80,255,0.6)',
     previewDot: '#ff44ff'
@@ -101,10 +101,28 @@ const TRAILS = [
     id: 'nova',
     name: 'Nova',
     desc: 'Glowing burst on every bounce',
-    price: 12500,
+    price: 6000,
     previewBg: 'linear-gradient(135deg,#ffaa0080,#ff440080)',
     previewBorder: 'rgba(255,160,0,0.6)',
     previewDot: '#ffaa00'
+  },
+  {
+    id: 'radiant',
+    name: 'Radiant',
+    desc: 'Solar orb with fire trail & embers',
+    price: 12000,
+    previewBg: 'radial-gradient(circle,#ffee0080,#ff660080)',
+    previewBorder: 'rgba(255,160,0,0.8)',
+    previewDot: '#ffe000'
+  },
+  {
+    id: 'prismatic',
+    name: 'Prismatic',
+    desc: 'Ethereal rainbow with mystical aura',
+    price: 25500,
+    previewBg: 'linear-gradient(135deg,#ff00ff80,#00ffff80,#ffff0080)',
+    previewBorder: 'rgba(220,180,255,0.8)',
+    previewDot: '#e0aaff'
   }
 ];
 
@@ -228,12 +246,14 @@ function playClickSfx() {
 function playBounceSfx(speed, trailId) {
   if (!sfxEnabled) return;
   switch(trailId) {
-    case 'original': playBounceOriginalSfx(speed); break;
-    case 'sparky':   playBounceSparkySfx(speed);   break;
-    case 'chromatic':playBounceChromaticSfx(speed);break;
-    case 'hyper':    playBounceHyperSfx(speed);    break;
-    case 'nova':     playBounceNovaSfx(speed);     break;
-    default:         playBounceSandboxSfx(speed);  break;
+    case 'original':  playBounceOriginalSfx(speed);  break;
+    case 'sparky':    playBounceSparkySfx(speed);    break;
+    case 'chromatic': playBounceChromaticSfx(speed); break;
+    case 'hyper':     playBounceHyperSfx(speed);     break;
+    case 'nova':      playBounceNovaSfx(speed);      break;
+    case 'radiant':   playBounceRadiantSfx(speed);   break;
+    case 'prismatic': playBouncePrismaticSfx(speed); break;
+    default:          playBounceSandboxSfx(speed);   break;
   }
 }
 function playBounceSandboxSfx(speed) {
@@ -313,6 +333,67 @@ function playBounceSparkySfx(speed) {
   o2.connect(g2); g2.connect(audioCtx.destination); o2.start(); o2.stop(t + 0.08);
 }
 
+// RADIANT — crackling fire whoosh
+function playBounceRadiantSfx(speed) {
+  const t = audioCtx.currentTime;
+  // noise-like crackle via fast-modulated sawtooth
+  const pitch = Math.min(800, 180 + speed * 18);
+  const crackle = audioCtx.createOscillator(), cg = audioCtx.createGain();
+  crackle.type = 'sawtooth';
+  crackle.frequency.setValueAtTime(pitch * 3, t);
+  crackle.frequency.exponentialRampToValueAtTime(pitch * 0.1, t + 0.22);
+  cg.gain.setValueAtTime(0.28, t);
+  cg.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  crackle.connect(cg); cg.connect(audioCtx.destination);
+  crackle.start(); crackle.stop(t + 0.22);
+  // low whomp thud
+  const thud = audioCtx.createOscillator(), tg = audioCtx.createGain();
+  thud.type = 'sine';
+  thud.frequency.setValueAtTime(120, t);
+  thud.frequency.exponentialRampToValueAtTime(40, t + 0.18);
+  tg.gain.setValueAtTime(0.35, t);
+  tg.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  thud.connect(tg); tg.connect(audioCtx.destination);
+  thud.start(); thud.stop(t + 0.2);
+  // high hiss layer
+  const hiss = audioCtx.createOscillator(), hg = audioCtx.createGain();
+  hiss.type = 'sawtooth';
+  hiss.frequency.setValueAtTime(2200 + speed * 40, t);
+  hiss.frequency.linearRampToValueAtTime(800, t + 0.12);
+  hg.gain.setValueAtTime(0.10, t);
+  hg.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+  hiss.connect(hg); hg.connect(audioCtx.destination);
+  hiss.start(); hiss.stop(t + 0.14);
+}
+
+// PRISMATIC — shimmering ethereal bell chord
+function playBouncePrismaticSfx(speed) {
+  const t = audioCtx.currentTime;
+  const baseFreq = Math.min(900, 300 + speed * 20);
+  // bell tones — pure sines at harmonic intervals
+  const harmonics = [1, 1.5, 2.0, 2.67, 3.36];
+  const vols      = [0.22, 0.14, 0.10, 0.07, 0.05];
+  harmonics.forEach((mult, i) => {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(baseFreq * mult, t);
+    o.frequency.linearRampToValueAtTime(baseFreq * mult * 1.004, t + 0.04); // tiny shimmer
+    g.gain.setValueAtTime(vols[i], t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.6 - i * 0.06);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(t + 0.65);
+  });
+  // soft airy breath underneath
+  const breath = audioCtx.createOscillator(), bg = audioCtx.createGain();
+  breath.type = 'triangle';
+  breath.frequency.setValueAtTime(baseFreq * 0.5, t);
+  breath.frequency.linearRampToValueAtTime(baseFreq * 0.25, t + 0.4);
+  bg.gain.setValueAtTime(0.08, t);
+  bg.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+  breath.connect(bg); bg.connect(audioCtx.destination);
+  breath.start(); breath.stop(t + 0.5);
+}
+
 // ── MUSIC ─────────────────────────────────────────────────
 function startMusic() {
   if (musicPlaying || !musicEnabled) return;
@@ -369,57 +450,83 @@ function startShopMusic() {
   musicPlaying = true; currentMusicType = 'shop';
   const master = audioCtx.createGain();
   master.gain.setValueAtTime(0, audioCtx.currentTime);
-  master.gain.linearRampToValueAtTime(0.16, audioCtx.currentTime + 2.5);
+  master.gain.linearRampToValueAtTime(0.20, audioCtx.currentTime + 1.2);
   master.connect(audioCtx.destination);
-  const delay = audioCtx.createDelay(2.0); delay.delayTime.value = 0.75;
-  const delayGain = audioCtx.createGain(); delayGain.gain.value = 0.28;
+
+  // Short punchy delay for energy
+  const delay = audioCtx.createDelay(0.5); delay.delayTime.value = 0.18;
+  const delayGain = audioCtx.createGain(); delayGain.gain.value = 0.22;
   delay.connect(delayGain); delayGain.connect(delay); delayGain.connect(master);
-  const sub = audioCtx.createOscillator(), subGain = audioCtx.createGain();
-  sub.type = 'sine'; sub.frequency.value = 41.2; subGain.gain.value = 0.6;
-  sub.connect(subGain); subGain.connect(master); sub.start();
+
+  // Punchy bass — higher & tighter than menu
+  const bass = audioCtx.createOscillator(), bassGain = audioCtx.createGain();
+  bass.type = 'triangle'; bass.frequency.value = 82.4; bassGain.gain.value = 0.55;
+  bass.connect(bassGain); bassGain.connect(master); bass.start();
+
+  // Driving mid bass layer
   const mid = audioCtx.createOscillator(), midGain = audioCtx.createGain();
-  mid.type = 'triangle'; mid.frequency.value = 82.4; midGain.gain.value = 0.15;
+  mid.type = 'sawtooth'; mid.frequency.value = 164.8; midGain.gain.value = 0.08;
   mid.connect(midGain); midGain.connect(master); mid.start();
-  const p1 = audioCtx.createOscillator(), p1g = audioCtx.createGain();
-  p1.type = 'sine'; p1.frequency.value = 130.8; p1g.gain.value = 0.10;
-  p1.connect(p1g); p1g.connect(master); p1.start();
-  const p2 = audioCtx.createOscillator(), p2g = audioCtx.createGain();
-  p2.type = 'sine'; p2.frequency.value = 185.0; p2g.gain.value = 0.07;
-  p2.connect(p2g); p2g.connect(master); p2.start();
-  const p3 = audioCtx.createOscillator(), p3g = audioCtx.createGain();
-  p3.type = 'sine'; p3.frequency.value = 246.9; p3g.gain.value = 0.05;
-  p3.connect(p3g); p3g.connect(master); p3.start();
-  const shopArpNotes = [130.8, 164.8, 196.0, 246.9, 261.6, 196.0, 164.8, 130.8];
-  const shopArpInterval = 0.55;
+
+  // Bright pad chord — major feel, uplifting
+  const padFreqs = [261.6, 329.6, 392.0, 523.2];
+  const padOscs = padFreqs.map(f => {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = f; g.gain.value = 0.055;
+    o.connect(g); g.connect(master); o.start();
+    return { o, g };
+  });
+
+  // Fast upbeat arp — pentatonic major, snappy
+  const arpNotes = [523.2, 659.3, 784.0, 1046.5, 784.0, 659.3, 523.2, 392.0,
+                    523.2, 659.3, 523.2, 392.0, 329.6, 392.0, 523.2, 659.3];
+  const arpInterval = 0.14; // fast & bouncy
   let arpStep = 0, arpActive = true, arpTimer = null;
   function playShopArpNote() {
     if (!arpActive) return;
-    const freq = shopArpNotes[arpStep % shopArpNotes.length];
+    const freq = arpNotes[arpStep % arpNotes.length];
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.type = 'sine'; o.frequency.value = freq;
-    g.gain.setValueAtTime(0.18, audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + shopArpInterval * 1.6);
+    o.type = 'square'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + arpInterval * 1.1);
     o.connect(g); g.connect(delay); g.connect(master);
-    o.start(); o.stop(audioCtx.currentTime + shopArpInterval * 1.6);
+    o.start(); o.stop(audioCtx.currentTime + arpInterval * 1.2);
     arpStep++;
-    arpTimer = setTimeout(playShopArpNote, shopArpInterval * 1000);
+    arpTimer = setTimeout(playShopArpNote, arpInterval * 1000);
   }
-  arpTimer = setTimeout(playShopArpNote, 1200);
-  let shimmerStep = 0;
-  const shimmerInterval = setInterval(() => {
-    if (!arpActive) { clearInterval(shimmerInterval); return; }
-    subGain.gain.setValueAtTime(0.55 + Math.sin(shimmerStep * 0.18) * 0.12, audioCtx.currentTime);
-    shimmerStep++;
-  }, 80);
+  arpTimer = setTimeout(playShopArpNote, 300);
+
+  // Rhythmic pulse on bass — sidechained feel via gain modulation
+  let pulseStep = 0;
+  const BPM = 128, beatMs = (60 / BPM) * 1000;
+  const pulseTimer = setInterval(() => {
+    if (!arpActive) { clearInterval(pulseTimer); return; }
+    const beat = pulseStep % 4;
+    // kick-like accent on beat 1 and 3
+    if (beat === 0 || beat === 2) {
+      bassGain.gain.setValueAtTime(0.9, audioCtx.currentTime);
+      bassGain.gain.exponentialRampToValueAtTime(0.4, audioCtx.currentTime + 0.12);
+    }
+    // bright accent note on off-beats
+    if (beat === 1 || beat === 3) {
+      const acc = audioCtx.createOscillator(), ag = audioCtx.createGain();
+      acc.type = 'triangle'; acc.frequency.value = beat === 1 ? 1046.5 : 880.0;
+      ag.gain.setValueAtTime(0.09, audioCtx.currentTime);
+      ag.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+      acc.connect(ag); ag.connect(master); acc.start(); acc.stop(audioCtx.currentTime + 0.12);
+    }
+    pulseStep++;
+  }, beatMs);
+
   musicNodes = {
     stop: () => {
-      arpActive = false; clearTimeout(arpTimer); clearInterval(shimmerInterval);
+      arpActive = false; clearTimeout(arpTimer); clearInterval(pulseTimer);
       master.gain.setValueAtTime(master.gain.value, audioCtx.currentTime);
-      master.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.5);
+      master.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.8);
       setTimeout(() => {
-        try { sub.stop(); mid.stop(); p1.stop(); p2.stop(); p3.stop(); } catch(e) {}
+        try { bass.stop(); mid.stop(); padOscs.forEach(p => p.o.stop()); } catch(e) {}
         musicPlaying = false; musicNodes = null; currentMusicType = '';
-      }, 1700);
+      }, 1000);
     }
   };
 }
@@ -569,12 +676,14 @@ function stopGame() {
 function loop() {
   const w = canvas.width, h = canvas.height, cx = w/2, cy = h/2;
   const t = equippedTrail;
-  if (t === 'original')   loopOriginal(w, h, cx, cy);
-  else if (t === 'sparky')    loopSparky(w, h, cx, cy);
-  else if (t === 'chromatic') loopChromatic(w, h, cx, cy);
-  else if (t === 'hyper')     loopHyper(w, h, cx, cy);
-  else if (t === 'nova')      loopNova(w, h, cx, cy);
-  else                        loopSandbox(w, h, cx, cy);
+  if (t === 'original')        loopOriginal(w, h, cx, cy);
+  else if (t === 'sparky')     loopSparky(w, h, cx, cy);
+  else if (t === 'chromatic')  loopChromatic(w, h, cx, cy);
+  else if (t === 'hyper')      loopHyper(w, h, cx, cy);
+  else if (t === 'nova')       loopNova(w, h, cx, cy);
+  else if (t === 'radiant')    loopRadiant(w, h, cx, cy);
+  else if (t === 'prismatic')  loopPrismatic(w, h, cx, cy);
+  else                         loopSandbox(w, h, cx, cy);
   animId = requestAnimationFrame(loop);
 }
 
@@ -784,6 +893,205 @@ function loopNova(w, h, cx, cy) {
   const bounced = handleBounce(cx, cy);
   if (bounced) {
     spawnParticles(ball.x, ball.y, hue, 18); novaPulse = 1.0;
+    app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 120);
+  }
+}
+
+// RADIANT — sun orb, fire trail, ember particles
+function spawnFireParticles(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.6;
+    const speed = 1.5 + Math.random() * 4.5;
+    const fireHue = 20 + Math.random() * 40; // deep orange to yellow
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1.2,
+      hue: fireHue,
+      life: 1.0,
+      r: 2 + Math.random() * 3.5,
+      type: 'fire'
+    });
+  }
+}
+function loopRadiant(w, h, cx, cy) {
+  ctx.fillStyle = 'rgba(2,6,14,0.30)';
+  ctx.fillRect(0, 0, w, h);
+
+  // ambient ember drift particles (continuous, not just on bounce)
+  if (Math.random() < 0.6) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = ballRadius * (0.4 + Math.random() * 0.5);
+    particles.push({
+      x: ball.x + Math.cos(angle) * r,
+      y: ball.y + Math.sin(angle) * r,
+      vx: (Math.random() - 0.5) * 1.2,
+      vy: -(0.6 + Math.random() * 1.5),
+      hue: 15 + Math.random() * 50,
+      life: 0.7 + Math.random() * 0.3,
+      r: 1 + Math.random() * 2.2,
+      type: 'fire'
+    });
+  }
+
+  // update & draw particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.97; p.life -= 0.022;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    const pHue = p.hue + (1 - p.life) * 20; // shifts from orange to red as it dies
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${pHue},100%,${55 + p.life * 15}%,${p.life * 0.85})`;
+    ctx.fill();
+  }
+
+  // fire trail
+  trail.push({ x: ball.x, y: ball.y, r: ballRadius });
+  if (trail.length > 55) trail.shift();
+  for (let i = 0; i < trail.length; i++) {
+    const t = trail[i], alpha = i / trail.length;
+    const tHue = 30 - (1 - alpha) * 20; // tip yellow, tail red
+    const grad = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, t.r * alpha);
+    grad.addColorStop(0, `hsla(${tHue + 30},100%,80%,${alpha * 0.7})`);
+    grad.addColorStop(1, `hsla(${tHue},100%,45%,0)`);
+    ctx.beginPath(); ctx.arc(t.x, t.y, Math.max(1, t.r * alpha), 0, Math.PI * 2);
+    ctx.fillStyle = grad; ctx.fill();
+  }
+
+  // ring — warm orange glow
+  ctx.save();
+  ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 8 + novaPulse * 18;
+  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `hsl(${28 + novaPulse * 10},100%,55%)`; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.restore();
+  novaPulse = Math.max(0, novaPulse - 0.04);
+
+  // sun ball — radial gradient yellow-white core
+  ctx.save();
+  ctx.shadowColor = '#ffdd00'; ctx.shadowBlur = 20 + Math.sin(Date.now() * 0.004) * 8;
+  const sunGrad = ctx.createRadialGradient(ball.x - ballRadius * 0.3, ball.y - ballRadius * 0.3, 0, ball.x, ball.y, ballRadius);
+  sunGrad.addColorStop(0, '#ffffff');
+  sunGrad.addColorStop(0.3, '#ffee44');
+  sunGrad.addColorStop(0.7, '#ffaa00');
+  sunGrad.addColorStop(1, '#ff5500');
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.fillStyle = sunGrad; ctx.fill();
+  ctx.restore();
+
+  drawMirrorBall(30); handleMirror(cx, cy);
+  ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
+  const bounced = handleBounce(cx, cy);
+  if (bounced) {
+    spawnFireParticles(ball.x, ball.y, 22);
+    novaPulse = 1.0;
+    app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 100);
+  }
+}
+
+// PRISMATIC — ethereal rainbow, mystical aura particles
+function spawnPrismaticParticles(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i + Math.random() * 0.4;
+    const speed = 1.2 + Math.random() * 4.0;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      hue: Math.random() * 360,
+      life: 1.0,
+      r: 1.5 + Math.random() * 3,
+      type: 'prismatic'
+    });
+  }
+}
+let prismaticHue = 0;
+function loopPrismatic(w, h, cx, cy) {
+  ctx.fillStyle = 'rgba(2,5,18,0.20)';
+  ctx.fillRect(0, 0, w, h);
+  prismaticHue = (prismaticHue + 0.5) % 360;
+
+  // continuous floating aura motes
+  if (Math.random() < 0.55) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = ballRadius * (0.6 + Math.random() * 1.2);
+    particles.push({
+      x: ball.x + Math.cos(angle) * r,
+      y: ball.y + Math.sin(angle) * r,
+      vx: (Math.random() - 0.5) * 0.8,
+      vy: -(0.3 + Math.random() * 0.9),
+      hue: Math.random() * 360,
+      life: 0.6 + Math.random() * 0.4,
+      r: 1 + Math.random() * 2,
+      type: 'prismatic'
+    });
+  }
+
+  // update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.98; p.vy *= 0.98;
+    p.hue = (p.hue + 1.5) % 360;
+    p.life -= 0.018;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    ctx.save();
+    ctx.shadowColor = `hsl(${p.hue},100%,70%)`;
+    ctx.shadowBlur = 6 * p.life;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${p.hue},100%,75%,${p.life * 0.9})`;
+    ctx.fill(); ctx.restore();
+  }
+
+  // beautiful rainbow trail — each segment a different hue, wide & soft
+  trail.push({ x: ball.x, y: ball.y, hue: prismaticHue, r: ballRadius });
+  if (trail.length > 110) trail.shift();
+  for (let i = 0; i < trail.length; i++) {
+    const t = trail[i], alpha = i / trail.length;
+    const tHue = (t.hue + i * 3.3) % 360;
+    const size = Math.max(1, t.r * alpha);
+    ctx.save();
+    ctx.shadowColor = `hsl(${tHue},100%,65%)`;
+    ctx.shadowBlur = 8 * alpha;
+    const grad = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, size);
+    grad.addColorStop(0, `hsla(${tHue},100%,85%,${alpha * 0.75})`);
+    grad.addColorStop(0.5, `hsla(${(tHue + 30) % 360},100%,65%,${alpha * 0.5})`);
+    grad.addColorStop(1, `hsla(${(tHue + 60) % 360},100%,50%,0)`);
+    ctx.beginPath(); ctx.arc(t.x, t.y, size, 0, Math.PI * 2);
+    ctx.fillStyle = grad; ctx.fill(); ctx.restore();
+  }
+
+  // ring — slowly cycling rainbow
+  ctx.save();
+  ctx.shadowColor = `hsl(${prismaticHue},100%,65%)`; ctx.shadowBlur = 10 + novaPulse * 20;
+  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `hsl(${prismaticHue},90%,65%)`; ctx.lineWidth = 2.5 + novaPulse * 2; ctx.stroke();
+  ctx.restore();
+  novaPulse = Math.max(0, novaPulse - 0.035);
+
+  // ball — mystical glowing orb, shifting rainbow gradient
+  const bHue1 = prismaticHue;
+  const bHue2 = (prismaticHue + 120) % 360;
+  const bHue3 = (prismaticHue + 240) % 360;
+  ctx.save();
+  ctx.shadowColor = `hsl(${bHue1},100%,75%)`; ctx.shadowBlur = 22 + Math.sin(Date.now() * 0.003) * 8;
+  const ballGrad = ctx.createRadialGradient(ball.x - ballRadius * 0.3, ball.y - ballRadius * 0.3, 0, ball.x, ball.y, ballRadius);
+  ballGrad.addColorStop(0, `hsl(${bHue1},100%,92%)`);
+  ballGrad.addColorStop(0.4, `hsl(${bHue2},100%,70%)`);
+  ballGrad.addColorStop(1, `hsl(${bHue3},100%,55%)`);
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.fillStyle = ballGrad; ctx.fill();
+  // outer glow ring
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius + 3, 0, Math.PI * 2);
+  ctx.strokeStyle = `hsla(${bHue2},100%,80%,0.5)`; ctx.lineWidth = 2; ctx.stroke();
+  ctx.restore();
+
+  drawMirrorBall(prismaticHue); handleMirror(cx, cy);
+  ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
+  const bounced = handleBounce(cx, cy);
+  if (bounced) {
+    spawnPrismaticParticles(ball.x, ball.y, 24);
+    novaPulse = 1.0;
     app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 120);
   }
 }
