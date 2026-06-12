@@ -65,7 +65,7 @@ const TRAILS = [
     id: 'original',
     name: 'Original',
     desc: 'Colourful ink that never fades',
-    price: 500,
+    price: 800,
     previewBg: 'linear-gradient(135deg,#ff006680,#ffaa0080)',
     previewBorder: 'rgba(255,180,0,0.6)',
     previewDot: '#ffcc00'
@@ -74,7 +74,7 @@ const TRAILS = [
     id: 'sparky',
     name: 'Sparky',
     desc: 'Electric blue streak',
-    price: 800,
+    price: 1500,
     previewBg: 'linear-gradient(135deg,#0044cc80,#00ccff80)',
     previewBorder: 'rgba(0,200,255,0.6)',
     previewDot: '#00ccff'
@@ -83,7 +83,7 @@ const TRAILS = [
     id: 'chromatic',
     name: 'Chromatic',
     desc: 'Full spectrum rainbow trail',
-    price: 1300,
+    price: 3200,
     previewBg: 'linear-gradient(135deg,#ff000080,#00ff0080,#0000ff80)',
     previewBorder: 'rgba(180,100,255,0.6)',
     previewDot: '#cc44ff'
@@ -92,7 +92,7 @@ const TRAILS = [
     id: 'hyper',
     name: 'Hyper',
     desc: 'Rapid colour-flashing chaos',
-    price: 2800,
+    price: 6000,
     previewBg: 'linear-gradient(135deg,#ff440080,#ff00ff80)',
     previewBorder: 'rgba(255,80,255,0.6)',
     previewDot: '#ff44ff'
@@ -101,7 +101,7 @@ const TRAILS = [
     id: 'nova',
     name: 'Nova',
     desc: 'Glowing burst on every bounce',
-    price: 6000,
+    price: 12500,
     previewBg: 'linear-gradient(135deg,#ffaa0080,#ff440080)',
     previewBorder: 'rgba(255,160,0,0.6)',
     previewDot: '#ffaa00'
