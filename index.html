@@ -1,122 +1,140 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chromatic</title>
-  <link href="style.css" rel="stylesheet">
-</head>
-<body>
-  <div id="app">
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap');
+* { margin:0;padding:0;box-sizing:border-box; }
+html, body { width:100%;height:100%;overflow:hidden;background:#020b18; }
+#app { background:#020b18;width:100%;height:100vh;overflow:hidden;position:relative;font-family:'Rajdhani',sans-serif; }
+.screen { position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;transition:opacity 0.3s; }
+.screen.hidden { opacity:0;pointer-events:none; }
+.grid-bg { position:absolute;inset:0;background-image:linear-gradient(rgba(30,120,255,0.07) 1px,transparent 1px),linear-gradient(90deg,rgba(30,120,255,0.07) 1px,transparent 1px);background-size:40px 40px;animation:gridShift 20s linear infinite; }
+@keyframes gridShift { to{transform:translateY(40px)} }
+.scanline { position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,80,200,0.015) 3px,rgba(0,80,200,0.015) 4px);pointer-events:none; }
+.corner { position:absolute;width:40px;height:40px;border-color:#1e78ff;border-style:solid;opacity:0.5; }
+.corner.tl{top:20px;left:20px;border-width:2px 0 0 2px} .corner.tr{top:20px;right:20px;border-width:2px 2px 0 0}
+.corner.bl{bottom:20px;left:20px;border-width:0 0 2px 2px} .corner.br{bottom:20px;right:20px;border-width:0 2px 2px 0}
+.logo-ring { width:clamp(80px,15vw,150px);height:clamp(80px,15vw,150px);border-radius:50%;border:2px solid rgba(30,120,255,0.4);display:flex;align-items:center;justify-content:center;margin-bottom:clamp(20px,5vh,40px);position:relative;animation:rotate 12s linear infinite; }
+.logo-ring::before { content:'';position:absolute;width:85%;height:85%;border-radius:50%;border:1px solid rgba(30,120,255,0.2); }
+.logo-ring::after { content:'';position:absolute;width:8px;height:8px;border-radius:50%;background:#1e78ff;top:-4px;left:50%;transform:translateX(-50%); }
+@keyframes rotate { to{transform:rotate(360deg)} }
+.logo-inner { width:85%;height:85%;border-radius:50%;background:rgba(30,120,255,0.1);border:1px solid rgba(30,120,255,0.3);display:flex;align-items:center;justify-content:center;animation:rotate 12s linear infinite reverse; }
+.logo-hex { width:40%;height:40%;background:#1e78ff;clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);opacity:0.9; }
+.game-title { font-family:'Orbitron',sans-serif;font-size:clamp(32px,10vw,56px);font-weight:900;color:#fff;letter-spacing:clamp(8px,2vw,14px);text-transform:uppercase;line-height:1;margin-bottom:clamp(4px,1vh,8px);animation:titlePulse 3s ease-in-out infinite; }
+@keyframes titlePulse { 0%,100%{text-shadow:0 0 40px rgba(30,120,255,0.6)} 50%{text-shadow:0 0 60px rgba(30,120,255,0.9)} }
+.subtitle { font-size:clamp(10px,2vw,14px);font-weight:300;color:rgba(100,160,255,0.6);letter-spacing:clamp(4px,1vw,6px);text-transform:uppercase;margin-bottom:clamp(30px,5vh,50px); }
+.divider { width:clamp(150px,40vw,220px);height:1px;background:linear-gradient(90deg,transparent,rgba(30,120,255,0.5),transparent);margin-bottom:clamp(30px,5vh,40px); }
+.btn-group { display:flex;flex-direction:column;gap:clamp(10px,2vh,16px);width:clamp(200px,60vw,280px); }
+.btn { padding:clamp(10px,2vh,16px) 0;background:rgba(10,40,100,0.3);border:1px solid rgba(30,120,255,0.3);color:#a0c4ff;font-family:'Orbitron',sans-serif;font-size:clamp(11px,2vw,14px);font-weight:700;letter-spacing:clamp(2px,0.5vw,4px);text-transform:uppercase;cursor:pointer;transition:all 0.2s;clip-path:polygon(12px 0%,100% 0%,calc(100% - 12px) 100%,0% 100%); }
+.btn:active,.back-btn:active { animation:btnPress 0.18s ease; }
+@keyframes btnPress { 0%{transform:scale(1)} 40%{transform:scale(0.93);filter:brightness(1.6) drop-shadow(0 0 8px rgba(30,120,255,0.9))} 100%{transform:scale(1)} }
+.btn:hover { color:#fff;border-color:rgba(30,120,255,0.8);background:rgba(10,40,100,0.6); }
+.btn.primary { background:rgba(30,120,255,0.15);border-color:rgba(30,120,255,0.6);color:#1e78ff; }
+.btn.primary:hover { background:rgba(30,120,255,0.25);color:#fff;border-color:#1e78ff; }
+.btn-dot { display:inline-block;width:5px;height:5px;border-radius:50%;background:currentColor;margin-right:10px;vertical-align:middle;opacity:0.6; }
+.version-tag { position:absolute;bottom:clamp(16px,3vh,28px);right:clamp(16px,3vw,28px);font-size:clamp(9px,1.5vw,12px);letter-spacing:clamp(1px,0.3vw,2px);color:rgba(30,120,255,0.3);text-transform:uppercase; }
+.status-bar { position:absolute;top:clamp(16px,3vh,24px);left:50%;transform:translateX(-50%);display:flex;gap:6px;align-items:center; }
+.status-dot { width:6px;height:6px;border-radius:50%;background:#1e78ff;animation:blink 2s ease-in-out infinite; }
+.status-dot:nth-child(2){animation-delay:0.3s} .status-dot:nth-child(3){animation-delay:0.6s}
+@keyframes blink { 0%,100%{opacity:0.3} 50%{opacity:1} }
+.status-text { font-size:clamp(8px,1.5vw,11px);letter-spacing:clamp(2px,0.5vw,3px);color:rgba(30,120,255,0.4);text-transform:uppercase; }
+.back-btn { position:absolute;top:clamp(16px,3vh,24px);left:clamp(16px,3vw,24px);background:rgba(10,40,100,0.5);border:1px solid rgba(30,120,255,0.3);color:#a0c4ff;font-family:'Orbitron',sans-serif;font-size:clamp(8px,1.5vw,10px);letter-spacing:clamp(2px,0.5vw,3px);padding:clamp(6px,1vh,8px) clamp(10px,2vw,16px);cursor:pointer;clip-path:polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);z-index:10; }
+.back-btn:hover { color:#fff;border-color:#1e78ff; }
+.mode-label { position:absolute;top:clamp(16px,3vh,24px);left:50%;transform:translateX(-50%);font-family:'Orbitron',sans-serif;font-size:clamp(9px,1.5vw,12px);letter-spacing:clamp(2px,0.5vw,4px);color:rgba(30,120,255,0.5);text-transform:uppercase;white-space:nowrap; }
+.bounce-count { position:absolute;bottom:clamp(16px,3vh,28px);left:50%;transform:translateX(-50%);font-family:'Orbitron',sans-serif;font-size:clamp(11px,2vw,14px);letter-spacing:clamp(2px,0.5vw,4px);color:rgba(100,160,255,0.6); }
+.session-total { position:absolute;bottom:clamp(40px,6vh,58px);left:50%;transform:translateX(-50%);font-family:'Orbitron',sans-serif;font-size:clamp(9px,1.5vw,11px);letter-spacing:clamp(2px,0.5vw,3px);color:rgba(100,160,255,0.35);white-space:nowrap; }
+#app.shake { animation:screenShake 0.12s ease; }
+@keyframes screenShake { 0%,100%{transform:translate(0,0)} 25%{transform:translate(-3px,1px)} 75%{transform:translate(3px,-1px)} }
+#gameCanvas { position:absolute;inset:0;width:100%;height:100%; }
 
-    <!-- MENU -->
-    <div id="menuScreen" class="screen">
-      <div class="grid-bg"></div><div class="scanline"></div>
-      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-      <div class="status-bar">
-        <div class="status-dot"></div><div class="status-dot"></div><div class="status-dot"></div>
-        <span class="status-text">System Ready</span>
-      </div>
-      <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;">
-        <div class="logo-ring"><div class="logo-inner"><div class="logo-hex"></div></div></div>
-        <div class="game-title">Chromatic</div>
-        <div class="subtitle">Innovating Ball Physics</div>
-        <div class="divider"></div>
-        <div class="btn-group">
-          <button class="btn primary" id="playBtn"><span class="btn-dot"></span>Play</button>
-          <button class="btn primary" id="shopBtn"><span class="btn-dot"></span>Shop</button>
-          <button class="btn" id="settingsBtn"><span class="btn-dot"></span>Settings</button>
-        </div>
-      </div>
-      <div class="version-tag">v1.0.0</div>
-    </div>
+/* ── SHOP ──────────────────────────────────────────── */
+.shop-scanline-overlay { position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(100,200,255,0.012) 2px,rgba(100,200,255,0.012) 3px);pointer-events:none;z-index:1; }
+.shop-title-label { font-family:'Orbitron',sans-serif;font-size:clamp(18px,4vw,28px);font-weight:900;letter-spacing:clamp(8px,2vw,16px);color:#fff;text-shadow:0 0 30px rgba(100,200,255,0.8),0 0 60px rgba(100,200,255,0.4);text-transform:uppercase; }
+.shop-divider { width:clamp(120px,35vw,200px);height:1px;background:linear-gradient(90deg,transparent,rgba(100,200,255,0.5),transparent); }
+.shop-balance-card { display:flex;align-items:center;gap:16px;background:rgba(0,60,140,0.2);border:1px solid rgba(100,200,255,0.3);padding:16px 22px;width:100%;position:relative;clip-path:polygon(10px 0%,100% 0%,calc(100% - 10px) 100%,0% 100%); }
+.shop-balance-card::before { content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(100,200,255,0.6),transparent); }
+.shop-balance-icon { font-size:26px;color:#64c8ff;text-shadow:0 0 12px rgba(100,200,255,0.9);line-height:1;animation:iconPulse 2.5s ease-in-out infinite; }
+@keyframes iconPulse { 0%,100%{text-shadow:0 0 12px rgba(100,200,255,0.9)} 50%{text-shadow:0 0 24px rgba(100,200,255,1),0 0 40px rgba(100,200,255,0.5)} }
+.shop-balance-label { font-family:'Orbitron',sans-serif;font-size:9px;letter-spacing:3px;color:rgba(100,200,255,0.5);text-transform:uppercase; }
+.shop-balance-value { font-family:'Orbitron',sans-serif;font-size:clamp(22px,5vw,30px);font-weight:900;color:#64c8ff;letter-spacing:2px;text-shadow:0 0 16px rgba(100,200,255,0.7);line-height:1.1; }
+.shop-balance-subtext { margin-left:auto;font-family:'Orbitron',sans-serif;font-size:8px;letter-spacing:2px;color:rgba(100,200,255,0.25);text-transform:uppercase;align-self:flex-end; }
 
-    <!-- PLAY SCREEN (mode select replaced by single sandbox button) -->
-    <div id="modeScreen" class="screen hidden">
-      <div class="grid-bg"></div><div class="scanline"></div>
-      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-      <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;gap:24px;">
-        <div style="font-family:'Orbitron',sans-serif;font-size:13px;letter-spacing:6px;color:rgba(100,160,255,0.5);text-transform:uppercase;">Select Mode</div>
-        <button class="btn primary" id="sandboxModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Sandbox</button>
-      </div>
-      <button class="back-btn" id="backBtn">Back</button>
-    </div>
+/* Shop item card */
+.shop-item {
+  display:flex;align-items:center;gap:14px;
+  padding:14px 18px;
+  border:1px solid rgba(30,120,255,0.25);
+  background:rgba(10,30,80,0.25);
+  position:relative;
+  clip-path:polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);
+  transition:border-color 0.2s, background 0.2s;
+}
+.shop-item.equipped {
+  border-color:rgba(100,200,255,0.55);
+  background:rgba(0,60,140,0.3);
+}
+.shop-item.equipped::before {
+  content:'';position:absolute;top:0;left:0;right:0;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(100,200,255,0.7),transparent);
+}
+.shop-item-preview {
+  width:38px;height:38px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  position:relative;
+}
+.shop-item-info { flex:1;display:flex;flex-direction:column;gap:3px; }
+.shop-item-name { font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:3px;color:#a0c4ff;text-transform:uppercase; }
+.shop-item-desc { font-family:'Rajdhani',sans-serif;font-size:12px;color:rgba(100,160,255,0.45);letter-spacing:1px; }
+.shop-item-price { font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#64c8ff; }
 
-    <!-- SETTINGS -->
-    <div id="settingsScreen" class="screen hidden">
-      <div class="grid-bg"></div><div class="scanline"></div>
-      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-      <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;gap:32px;">
-        <div style="font-family:'Orbitron',sans-serif;font-size:13px;letter-spacing:6px;color:rgba(100,160,255,0.5);text-transform:uppercase;">Settings</div>
-        <div style="display:flex;flex-direction:column;gap:16px;width:280px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid rgba(30,120,255,0.3);padding:14px 20px;background:rgba(10,40,100,0.3);">
-            <span style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:3px;color:#a0c4ff;text-transform:uppercase;">Sound FX</span>
-            <button id="sfxToggle" style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:3px;padding:6px 16px;cursor:pointer;border:1px solid rgba(30,120,255,0.6);background:rgba(30,120,255,0.15);color:#1e78ff;text-transform:uppercase;">ON</button>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid rgba(30,120,255,0.3);padding:14px 20px;background:rgba(10,40,100,0.3);">
-            <span style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:3px;color:#a0c4ff;text-transform:uppercase;">Music</span>
-            <button id="musicToggle" style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:3px;padding:6px 16px;cursor:pointer;border:1px solid rgba(30,120,255,0.6);background:rgba(30,120,255,0.15);color:#1e78ff;text-transform:uppercase;">ON</button>
-          </div>
-        </div>
-      </div>
-      <button class="back-btn" id="settingsBackBtn">Back</button>
-    </div>
+.shop-item-btn {
+  font-family:'Orbitron',sans-serif;font-size:9px;letter-spacing:2px;
+  padding:7px 14px;cursor:pointer;
+  border:1px solid rgba(30,120,255,0.5);
+  background:rgba(30,120,255,0.12);
+  color:#1e78ff;text-transform:uppercase;
+  clip-path:polygon(6px 0%,100% 0%,calc(100% - 6px) 100%,0% 100%);
+  white-space:nowrap;flex-shrink:0;
+  transition:all 0.15s;
+}
+.shop-item-btn:hover { background:rgba(30,120,255,0.25);color:#fff;border-color:#1e78ff; }
+.shop-item-btn.equip-btn {
+  border-color:rgba(100,200,255,0.6);
+  background:rgba(0,80,160,0.25);
+  color:#64c8ff;
+}
+.shop-item-btn.equip-btn:hover { background:rgba(0,80,160,0.45);color:#fff; }
+.shop-item-btn.equipped-btn {
+  border-color:rgba(100,200,255,0.35);
+  background:rgba(0,60,120,0.2);
+  color:rgba(100,200,255,0.5);
+  cursor:default;
+}
+.shop-item-btn.cant-afford {
+  border-color:rgba(30,120,255,0.2);
+  background:rgba(10,30,80,0.15);
+  color:rgba(100,160,255,0.3);
+  cursor:not-allowed;
+}
 
-    <!-- SHOP -->
-    <div id="shopScreen" class="screen hidden">
-      <div class="grid-bg"></div><div class="scanline"></div>
-      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-      <div class="shop-scanline-overlay"></div>
+/* toast notification */
+.shop-toast {
+  position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+  font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;
+  padding:10px 24px;
+  background:rgba(2,11,24,0.95);
+  border:1px solid rgba(100,200,255,0.5);
+  color:#64c8ff;text-transform:uppercase;
+  clip-path:polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);
+  z-index:999;
+  animation:toastIn 0.2s ease, toastOut 0.3s ease 1.5s forwards;
+  pointer-events:none;
+}
+@keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(10px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+@keyframes toastOut { from{opacity:1} to{opacity:0} }
 
-      <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;width:100%;max-width:500px;padding:0 20px;gap:20px;">
-
-        <!-- Header + balance -->
-        <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
-          <div class="shop-title-label">SHOP</div>
-          <div class="shop-divider"></div>
-        </div>
-
-        <div class="shop-balance-card">
-          <div class="shop-balance-icon">◈</div>
-          <div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
-            <div class="shop-balance-label">Total Bounces</div>
-            <div class="shop-balance-value" id="shopBounceDisplay">0</div>
-          </div>
-          <div class="shop-balance-subtext">your currency</div>
-        </div>
-
-        <!-- Trail items list -->
-        <div style="display:flex;flex-direction:column;gap:10px;width:100%;overflow-y:auto;max-height:55vh;padding-right:2px;" id="shopItemsList">
-          <!-- injected by JS -->
-        </div>
-      </div>
-
-      <button class="back-btn" id="shopBackBtn">Back</button>
-    </div>
-
-    <!-- GAME -->
-    <div id="gameScreen" class="screen hidden">
-      <canvas id="gameCanvas"></canvas>
-      <button class="back-btn" id="gameBackBtn">Menu</button>
-      <div class="mode-label" id="modeLabel">Sandbox</div>
-      <div class="bounce-count" id="bounceCount">Bounces: 0</div>
-      <div class="session-total" id="sessionTotal">Total: 0</div>
-      <button id="attrBtn" style="position:absolute;bottom:clamp(16px,3vh,28px);right:clamp(16px,3vw,28px);font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.5);color:#a0c4ff;text-transform:uppercase;clip-path:polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);z-index:10;">Attributes</button>
-      <div id="attrMenu" style="display:none;position:absolute;top:50%;right:20px;transform:translateY(-50%);background:rgba(2,11,24,0.92);border:1px solid rgba(30,120,255,0.3);padding:20px;z-index:20;min-width:200px;flex-direction:column;gap:12px;">
-        <div style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:4px;color:rgba(100,160,255,0.6);text-transform:uppercase;margin-bottom:4px;">Attributes</div>
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#a0c4ff;text-transform:uppercase;">Zen</span>
-          <button id="attrZen" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;">OFF</button>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#a0c4ff;text-transform:uppercase;">Mirror</span>
-          <button id="attrMirror" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;">OFF</button>
-        </div>
-        <button id="attrClose" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;padding:6px;cursor:pointer;border:1px solid rgba(30,120,255,0.3);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;margin-top:4px;">Close</button>
-      </div>
-    </div>
-
-  </div>
-  <script src="script.js"></script>
-</body>
-</html>
+/* equipped badge in-game */
+.trail-badge {
+  position:absolute;top:clamp(16px,3vh,24px);right:clamp(16px,3vw,24px);
+  font-family:'Orbitron',sans-serif;font-size:8px;letter-spacing:2px;
+  color:rgba(100,200,255,0.4);text-transform:uppercase;
+  border:1px solid rgba(100,200,255,0.15);
+  padding:4px 10px;
+  clip-path:polygon(6px 0%,100% 0%,calc(100% - 6px) 100%,0% 100%);
+}
