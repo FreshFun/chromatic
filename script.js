@@ -123,8 +123,18 @@ const TRAILS = [
     previewBg: 'linear-gradient(135deg,#ff00ff80,#00ffff80,#ffff0080)',
     previewBorder: 'rgba(220,180,255,0.8)',
     previewDot: '#e0aaff'
+  },
+  {
+    id: 'illumination',
+    name: 'Illumination',
+    desc: 'Angelic white glow, divine light',
+    price: 35000,
+    previewBg: 'radial-gradient(circle,#ffffff80,#aaddff80)',
+    previewBorder: 'rgba(255,255,255,0.8)',
+    previewDot: '#ffffff'
   }
 ];
+
 
 // ── SHOP UI ───────────────────────────────────────────────
 function renderShop() {
@@ -253,6 +263,7 @@ function playBounceSfx(speed, trailId) {
     case 'nova':      playBounceNovaSfx(speed);      break;
     case 'radiant':   playBounceRadiantSfx(speed);   break;
     case 'prismatic': playBouncePrismaticSfx(speed); break;
+    case 'illumination': playBounceIlluminationSfx(speed); break;
     default:          playBounceSandboxSfx(speed);   break;
   }
 }
@@ -392,6 +403,40 @@ function playBouncePrismaticSfx(speed) {
   bg.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
   breath.connect(bg); bg.connect(audioCtx.destination);
   breath.start(); breath.stop(t + 0.5);
+}
+function playBounceIlluminationSfx(speed) {
+  const t = audioCtx.currentTime;
+  const baseFreq = Math.min(1000, 400 + speed * 18);
+  const harmonics = [1, 1.26, 1.5, 2.0, 2.52];
+  const vols      = [0.18, 0.13, 0.10, 0.08, 0.05];
+  harmonics.forEach((mult, i) => {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(baseFreq * mult, t);
+    o.frequency.linearRampToValueAtTime(baseFreq * mult * 1.008, t + 0.05);
+    g.gain.setValueAtTime(vols[i], t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.1 - i * 0.1);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(t + 1.2);
+  });
+  // airy high shimmer
+  const shimmer = audioCtx.createOscillator(), sg = audioCtx.createGain();
+  shimmer.type = 'sine';
+  shimmer.frequency.setValueAtTime(baseFreq * 4, t);
+  shimmer.frequency.linearRampToValueAtTime(baseFreq * 5, t + 0.3);
+  sg.gain.setValueAtTime(0.06, t);
+  sg.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+  shimmer.connect(sg); sg.connect(audioCtx.destination);
+  shimmer.start(); shimmer.stop(t + 0.5);
+  // soft low breath
+  const breath = audioCtx.createOscillator(), bg = audioCtx.createGain();
+  breath.type = 'triangle';
+  breath.frequency.setValueAtTime(baseFreq * 0.4, t);
+  breath.frequency.linearRampToValueAtTime(baseFreq * 0.2, t + 0.6);
+  bg.gain.setValueAtTime(0.07, t);
+  bg.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+  breath.connect(bg); bg.connect(audioCtx.destination);
+  breath.start(); breath.stop(t + 0.7);
 }
 
 // ── MUSIC ─────────────────────────────────────────────────
@@ -682,7 +727,8 @@ function loop() {
   else if (t === 'nova')       loopNova(w, h, cx, cy);
   else if (t === 'radiant')    loopRadiant(w, h, cx, cy);
   else if (t === 'prismatic')  loopPrismatic(w, h, cx, cy);
-  else                         loopSandbox(w, h, cx, cy);
+  else if (t === 'illumination') loopIllumination(w, h, cx, cy);
+  else                           loopSandbox(w, h, cx, cy);
   animId = requestAnimationFrame(loop);
 }
 
@@ -1090,6 +1136,108 @@ function loopPrismatic(w, h, cx, cy) {
   const bounced = handleBounce(cx, cy);
   if (bounced) {
     spawnPrismaticParticles(ball.x, ball.y, 24);
+    novaPulse = 1.0;
+    app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 120);
+  }
+}
+let illuminationHue = 0;
+function loopIllumination(w, h, cx, cy) {
+  ctx.fillStyle = 'rgba(2,5,18,0.18)';
+  ctx.fillRect(0, 0, w, h);
+  illuminationHue = (illuminationHue + 0.2) % 360;
+
+  // floating light motes
+  if (Math.random() < 0.6) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = ballRadius * (0.8 + Math.random() * 1.5);
+    particles.push({
+      x: ball.x + Math.cos(angle) * r,
+      y: ball.y + Math.sin(angle) * r,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: -(0.2 + Math.random() * 0.7),
+      hue: 200 + Math.random() * 40,
+      life: 0.6 + Math.random() * 0.4,
+      r: 1 + Math.random() * 2.5,
+      type: 'illumination'
+    });
+  }
+
+  // update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.99; p.vy *= 0.99;
+    p.life -= 0.016;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    ctx.save();
+    ctx.shadowColor = `rgba(255,255,255,${p.life})`;
+    ctx.shadowBlur = 12 * p.life;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255,255,255,${p.life * 0.85})`;
+    ctx.fill(); ctx.restore();
+  }
+
+  // white glowing trail
+  trail.push({ x: ball.x, y: ball.y, r: ballRadius });
+  if (trail.length > 100) trail.shift();
+  for (let i = 0; i < trail.length; i++) {
+    const t2 = trail[i], alpha = i / trail.length;
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,255,255,0.9)';
+    ctx.shadowBlur = 14 * alpha;
+    const grad = ctx.createRadialGradient(t2.x, t2.y, 0, t2.x, t2.y, Math.max(1, t2.r * alpha));
+    grad.addColorStop(0, `rgba(255,255,255,${alpha * 0.8})`);
+    grad.addColorStop(0.5, `rgba(200,230,255,${alpha * 0.5})`);
+    grad.addColorStop(1, `rgba(180,210,255,0)`);
+    ctx.beginPath(); ctx.arc(t2.x, t2.y, Math.max(1, t2.r * alpha), 0, Math.PI * 2);
+    ctx.fillStyle = grad; ctx.fill(); ctx.restore();
+  }
+
+  // ring — soft white divine glow
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,255,255,0.9)';
+  ctx.shadowBlur = 14 + novaPulse * 28;
+  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(220,240,255,${0.4 + novaPulse * 0.4})`;
+  ctx.lineWidth = 2 + novaPulse * 3; ctx.stroke(); ctx.restore();
+  novaPulse = Math.max(0, novaPulse - 0.035);
+
+  // angelic orb
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,255,255,1)';
+  ctx.shadowBlur = 30 + Math.sin(Date.now() * 0.003) * 10;
+  const ballGrad = ctx.createRadialGradient(
+    ball.x - ballRadius * 0.35, ball.y - ballRadius * 0.35, 0,
+    ball.x, ball.y, ballRadius
+  );
+  ballGrad.addColorStop(0, 'rgba(255,255,255,1)');
+  ballGrad.addColorStop(0.4, 'rgba(210,235,255,0.95)');
+  ballGrad.addColorStop(1, 'rgba(180,215,255,0.7)');
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.fillStyle = ballGrad; ctx.fill();
+  // outer divine ring
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius + 4, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(255,255,255,${0.3 + Math.sin(Date.now() * 0.004) * 0.15})`;
+  ctx.lineWidth = 2; ctx.stroke();
+  ctx.restore();
+
+  drawMirrorBall(200); handleMirror(cx, cy);
+  ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
+  const bounced = handleBounce(cx, cy);
+  if (bounced) {
+    // burst of white motes on bounce
+    for (let i = 0; i < 20; i++) {
+      const angle = (Math.PI * 2 / 20) * i + Math.random() * 0.3;
+      const speed2 = 1.5 + Math.random() * 4;
+      particles.push({
+        x: ball.x, y: ball.y,
+        vx: Math.cos(angle) * speed2,
+        vy: Math.sin(angle) * speed2,
+        hue: 210, life: 1.0,
+        r: 1.5 + Math.random() * 3,
+        type: 'illumination'
+      });
+    }
     novaPulse = 1.0;
     app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 120);
   }
