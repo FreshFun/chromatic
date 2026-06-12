@@ -36,7 +36,7 @@ function saveEquipped(id) {
   try { localStorage.setItem('chromatic_equipped', id); } catch(e) {}
 }
 
-let totalBounces = loadTotalBounces();
+  let totalBounces = loadTotalBounces();
 let ownedTrails = loadOwned();
 let equippedTrail = loadEquipped();
 
@@ -581,13 +581,12 @@ document.getElementById('shopBtn').addEventListener('click', () => {
   menuScreen.classList.add('hidden');
   shopScreen.classList.remove('hidden');
   renderShop();
-  if (musicEnabled && musicStarted) { stopMusic(); setTimeout(() => startShopMusic(), 600); }
 });
+  
 document.getElementById('shopBackBtn').addEventListener('click', () => {
   playClickSfx();
   shopScreen.classList.add('hidden');
   menuScreen.classList.remove('hidden');
-  if (musicEnabled && musicStarted) { stopMusic(); setTimeout(() => startMusic(), 600); }
 });
 document.getElementById('gameBackBtn').addEventListener('click', () => {
   playClickSfx(); stopGame();
