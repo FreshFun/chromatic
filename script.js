@@ -490,91 +490,6 @@ function startMusic() {
     }
   };
 }
-function startShopMusic() {
-  if (musicPlaying || !musicEnabled) return;
-  musicPlaying = true; currentMusicType = 'shop';
-  const master = audioCtx.createGain();
-  master.gain.setValueAtTime(0, audioCtx.currentTime);
-  master.gain.linearRampToValueAtTime(0.20, audioCtx.currentTime + 1.2);
-  master.connect(audioCtx.destination);
-
-  // Short punchy delay for energy
-  const delay = audioCtx.createDelay(0.5); delay.delayTime.value = 0.18;
-  const delayGain = audioCtx.createGain(); delayGain.gain.value = 0.22;
-  delay.connect(delayGain); delayGain.connect(delay); delayGain.connect(master);
-
-  // Punchy bass — higher & tighter than menu
-  const bass = audioCtx.createOscillator(), bassGain = audioCtx.createGain();
-  bass.type = 'triangle'; bass.frequency.value = 82.4; bassGain.gain.value = 0.55;
-  bass.connect(bassGain); bassGain.connect(master); bass.start();
-
-  // Driving mid bass layer
-  const mid = audioCtx.createOscillator(), midGain = audioCtx.createGain();
-  mid.type = 'sawtooth'; mid.frequency.value = 164.8; midGain.gain.value = 0.08;
-  mid.connect(midGain); midGain.connect(master); mid.start();
-
-  // Bright pad chord — major feel, uplifting
-  const padFreqs = [261.6, 329.6, 392.0, 523.2];
-  const padOscs = padFreqs.map(f => {
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.type = 'sine'; o.frequency.value = f; g.gain.value = 0.055;
-    o.connect(g); g.connect(master); o.start();
-    return { o, g };
-  });
-
-  // Fast upbeat arp — pentatonic major, snappy
-  const arpNotes = [523.2, 659.3, 784.0, 1046.5, 784.0, 659.3, 523.2, 392.0,
-                    523.2, 659.3, 523.2, 392.0, 329.6, 392.0, 523.2, 659.3];
-  const arpInterval = 0.14; // fast & bouncy
-  let arpStep = 0, arpActive = true, arpTimer = null;
-  function playShopArpNote() {
-    if (!arpActive) return;
-    const freq = arpNotes[arpStep % arpNotes.length];
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.type = 'square'; o.frequency.value = freq;
-    g.gain.setValueAtTime(0.15, audioCtx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + arpInterval * 1.1);
-    o.connect(g); g.connect(delay); g.connect(master);
-    o.start(); o.stop(audioCtx.currentTime + arpInterval * 1.2);
-    arpStep++;
-    arpTimer = setTimeout(playShopArpNote, arpInterval * 1000);
-  }
-  arpTimer = setTimeout(playShopArpNote, 300);
-
-  // Rhythmic pulse on bass — sidechained feel via gain modulation
-  let pulseStep = 0;
-  const BPM = 128, beatMs = (60 / BPM) * 1000;
-  const pulseTimer = setInterval(() => {
-    if (!arpActive) { clearInterval(pulseTimer); return; }
-    const beat = pulseStep % 4;
-    // kick-like accent on beat 1 and 3
-    if (beat === 0 || beat === 2) {
-      bassGain.gain.setValueAtTime(0.9, audioCtx.currentTime);
-      bassGain.gain.exponentialRampToValueAtTime(0.4, audioCtx.currentTime + 0.12);
-    }
-    // bright accent note on off-beats
-    if (beat === 1 || beat === 3) {
-      const acc = audioCtx.createOscillator(), ag = audioCtx.createGain();
-      acc.type = 'triangle'; acc.frequency.value = beat === 1 ? 1046.5 : 880.0;
-      ag.gain.setValueAtTime(0.09, audioCtx.currentTime);
-      ag.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
-      acc.connect(ag); ag.connect(master); acc.start(); acc.stop(audioCtx.currentTime + 0.12);
-    }
-    pulseStep++;
-  }, beatMs);
-
-  musicNodes = {
-    stop: () => {
-      arpActive = false; clearTimeout(arpTimer); clearInterval(pulseTimer);
-      master.gain.setValueAtTime(master.gain.value, audioCtx.currentTime);
-      master.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.8);
-      setTimeout(() => {
-        try { bass.stop(); mid.stop(); padOscs.forEach(p => p.o.stop()); } catch(e) {}
-        musicPlaying = false; musicNodes = null; currentMusicType = '';
-      }, 1000);
-    }
-  };
-}
 function stopMusic() {
   if (musicNodes && musicPlaying) musicNodes.stop();
 }
@@ -626,13 +541,11 @@ document.getElementById('shopBtn').addEventListener('click', () => {
   menuScreen.classList.add('hidden');
   shopScreen.classList.remove('hidden');
   renderShop();
-  if (musicEnabled && musicStarted) { stopMusic(); setTimeout(() => startShopMusic(), 1800); }
 });
 document.getElementById('shopBackBtn').addEventListener('click', () => {
   playClickSfx();
   shopScreen.classList.add('hidden');
   menuScreen.classList.remove('hidden');
-  if (musicEnabled && musicStarted) { stopMusic(); setTimeout(() => startMusic(), 1800); }
 });
 document.getElementById('gameBackBtn').addEventListener('click', () => {
   playClickSfx(); stopGame();
