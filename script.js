@@ -3,6 +3,11 @@ let particles = [];
 let novaPulse = 0;
 let attrZen = false;
 let attrMirror = false;
+let attrShrink = false;        // NEW
+let shrinkAmount = 0;          // NEW — how many pixels the circle has shrunk so far
+const SHRINK_RATE = 0.10;      // NEW — pixels shrunk per frame
+const SHRINK_MIN = 80;         // NEW — smallest the circle can get
+let effectiveCircleRadius = 0; // NEW — the actual radius used for drawing + collision
 let mirrorBall = {};
 let attrMenuOpen = false;
 let sfxEnabled = true;
@@ -150,17 +155,14 @@ function renderShop() {
     const item = document.createElement('div');
     item.className = 'shop-item' + (isEquipped ? ' equipped' : '');
 
-    // Preview circle
     const preview = document.createElement('div');
     preview.className = 'shop-item-preview';
     preview.style.background = trail.previewBg;
     preview.style.border = `2px solid ${trail.previewBorder}`;
-    // dot inside
     const dot = document.createElement('div');
     dot.style.cssText = `width:12px;height:12px;border-radius:50%;background:${trail.previewDot};box-shadow:0 0 8px ${trail.previewDot};`;
     preview.appendChild(dot);
 
-    // Info
     const info = document.createElement('div');
     info.className = 'shop-item-info';
     info.innerHTML = `
@@ -169,7 +171,6 @@ function renderShop() {
       ${!trail.free && !owned ? `<div class="shop-item-price">◈ ${trail.price.toLocaleString()}</div>` : ''}
     `;
 
-    // Button
     const btn = document.createElement('button');
     if (isEquipped) {
       btn.textContent = 'Equipped';
@@ -343,11 +344,8 @@ function playBounceSparkySfx(speed) {
   g2.gain.setValueAtTime(0.15, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
   o2.connect(g2); g2.connect(audioCtx.destination); o2.start(); o2.stop(t + 0.08);
 }
-
-// RADIANT — crackling fire whoosh
 function playBounceRadiantSfx(speed) {
   const t = audioCtx.currentTime;
-  // noise-like crackle via fast-modulated sawtooth
   const pitch = Math.min(800, 180 + speed * 18);
   const crackle = audioCtx.createOscillator(), cg = audioCtx.createGain();
   crackle.type = 'sawtooth';
@@ -357,7 +355,6 @@ function playBounceRadiantSfx(speed) {
   cg.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
   crackle.connect(cg); cg.connect(audioCtx.destination);
   crackle.start(); crackle.stop(t + 0.22);
-  // low whomp thud
   const thud = audioCtx.createOscillator(), tg = audioCtx.createGain();
   thud.type = 'sine';
   thud.frequency.setValueAtTime(120, t);
@@ -366,7 +363,6 @@ function playBounceRadiantSfx(speed) {
   tg.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
   thud.connect(tg); tg.connect(audioCtx.destination);
   thud.start(); thud.stop(t + 0.2);
-  // high hiss layer
   const hiss = audioCtx.createOscillator(), hg = audioCtx.createGain();
   hiss.type = 'sawtooth';
   hiss.frequency.setValueAtTime(2200 + speed * 40, t);
@@ -376,25 +372,21 @@ function playBounceRadiantSfx(speed) {
   hiss.connect(hg); hg.connect(audioCtx.destination);
   hiss.start(); hiss.stop(t + 0.14);
 }
-
-// PRISMATIC — shimmering ethereal bell chord
 function playBouncePrismaticSfx(speed) {
   const t = audioCtx.currentTime;
   const baseFreq = Math.min(900, 300 + speed * 20);
-  // bell tones — pure sines at harmonic intervals
   const harmonics = [1, 1.5, 2.0, 2.67, 3.36];
   const vols      = [0.22, 0.14, 0.10, 0.07, 0.05];
   harmonics.forEach((mult, i) => {
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
     o.type = 'sine';
     o.frequency.setValueAtTime(baseFreq * mult, t);
-    o.frequency.linearRampToValueAtTime(baseFreq * mult * 1.004, t + 0.04); // tiny shimmer
+    o.frequency.linearRampToValueAtTime(baseFreq * mult * 1.004, t + 0.04);
     g.gain.setValueAtTime(vols[i], t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.6 - i * 0.06);
     o.connect(g); g.connect(audioCtx.destination);
     o.start(); o.stop(t + 0.65);
   });
-  // soft airy breath underneath
   const breath = audioCtx.createOscillator(), bg = audioCtx.createGain();
   breath.type = 'triangle';
   breath.frequency.setValueAtTime(baseFreq * 0.5, t);
@@ -419,7 +411,6 @@ function playBounceIlluminationSfx(speed) {
     o.connect(g); g.connect(audioCtx.destination);
     o.start(); o.stop(t + 1.2);
   });
-  // airy high shimmer
   const shimmer = audioCtx.createOscillator(), sg = audioCtx.createGain();
   shimmer.type = 'sine';
   shimmer.frequency.setValueAtTime(baseFreq * 4, t);
@@ -428,7 +419,6 @@ function playBounceIlluminationSfx(speed) {
   sg.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
   shimmer.connect(sg); sg.connect(audioCtx.destination);
   shimmer.start(); shimmer.stop(t + 0.5);
-  // soft low breath
   const breath = audioCtx.createOscillator(), bg = audioCtx.createGain();
   breath.type = 'triangle';
   breath.frequency.setValueAtTime(baseFreq * 0.4, t);
@@ -517,6 +507,7 @@ window.addEventListener('resize', () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     circleRadius = Math.min(canvas.width, canvas.height) * 0.38;
+    effectiveCircleRadius = circleRadius - shrinkAmount; // keep in sync on resize
   }
 });
 document.getElementById('app').addEventListener('click', () => {
@@ -551,8 +542,12 @@ document.getElementById('gameBackBtn').addEventListener('click', () => {
   playClickSfx(); stopGame();
   gameScreen.classList.add('hidden'); menuScreen.classList.remove('hidden');
   attrMenuOpen = false; attrZen = false; attrMirror = false; GRAVITY = GRAVITY_DEFAULT;
+  // Reset shrink
+  attrShrink = false; shrinkAmount = 0;
   document.getElementById('attrMenu').style.display = 'none';
-  updateAttrBtn('attrZen', false); updateAttrBtn('attrMirror', false);
+  updateAttrBtn('attrZen', false);
+  updateAttrBtn('attrMirror', false);
+  updateAttrBtn('attrShrink', false); // NEW
   if (musicEnabled && musicStarted) startMusic();
 });
 document.getElementById('attrBtn').addEventListener('click', () => {
@@ -575,6 +570,16 @@ document.getElementById('attrMirror').addEventListener('click', () => {
   updateAttrBtn('attrMirror', attrMirror);
   if (attrMirror) spawnMirrorBall(canvas.width, canvas.height);
 });
+
+// NEW — Shrink toggle
+document.getElementById('attrShrink').addEventListener('click', () => {
+  playClickSfx();
+  attrShrink = !attrShrink;
+  shrinkAmount = 0; // reset progress when toggled
+  effectiveCircleRadius = circleRadius;
+  updateAttrBtn('attrShrink', attrShrink);
+});
+
 document.getElementById('sfxToggle').addEventListener('click', () => {
   sfxEnabled = !sfxEnabled;
   const btn = document.getElementById('sfxToggle');
@@ -595,12 +600,10 @@ document.getElementById('musicToggle').addEventListener('click', () => {
   playClickSfx();
 });
 
-// Sandbox is the only mode now
 document.getElementById('sandboxModeBtn').addEventListener('click', () => {
   playClickSfx(); stopMusic();
   modeScreen.classList.add('hidden'); gameScreen.classList.remove('hidden');
   modeLabel.textContent = equippedTrail.charAt(0).toUpperCase() + equippedTrail.slice(1) + ' Trail';
-  // show equipped badge
   let badge = document.getElementById('trailBadge');
   if (!badge) {
     badge = document.createElement('div');
@@ -617,6 +620,8 @@ function startGame() {
   canvas.width = window.innerWidth; canvas.height = window.innerHeight;
   const w = canvas.width, h = canvas.height;
   circleRadius = Math.min(w, h) * 0.38;
+  shrinkAmount = 0;                      // NEW — reset shrink on new game
+  effectiveCircleRadius = circleRadius;  // NEW
   ballRadius = 10; bounces = 0; trail = []; hue = 0;
   currentSpeed = START_SPEED;
   document.getElementById('bounceCount').textContent = 'Bounces: 0';
@@ -660,7 +665,8 @@ function handleMirror(cx, cy) {
   }
   const mdx = mirrorBall.x - cx, mdy = mirrorBall.y - cy;
   const mdist = Math.sqrt(mdx*mdx + mdy*mdy);
-  const mmaxDist = circleRadius - ballRadius;
+  // mirror ball also respects the shrinking radius
+  const mmaxDist = effectiveCircleRadius - ballRadius;
   if (mdist >= mmaxDist) {
     const mnx = mdx/mdist, mny = mdy/mdist;
     const mdot = mirrorBall.vx*mnx + mirrorBall.vy*mny;
@@ -678,11 +684,18 @@ function drawMirrorBall(mhue) {
   ctx.strokeStyle = `hsl(${(mFlashHue+60)%360},100%,80%)`; ctx.lineWidth = 2; ctx.stroke();
 }
 
-// shared bounce logic
+// ── HANDLE BOUNCE (with Shrink built in) ──────────────────
 function handleBounce(cx, cy) {
+  // NEW — update the effective radius every frame when shrink is on
+  if (attrShrink) {
+    const minAllowed = SHRINK_MIN + ballRadius;
+    shrinkAmount = shrinkAmount + SHRINK_RATE;
+  }
+  effectiveCircleRadius = circleRadius - shrinkAmount;
+
   const dx = ball.x - cx, dy = ball.y - cy;
   const dist = Math.sqrt(dx*dx + dy*dy);
-  const maxDist = circleRadius - ballRadius;
+  const maxDist = effectiveCircleRadius - ballRadius; // uses shrunk radius
   if (dist >= maxDist) {
     const nx = dx/dist, ny = dy/dist;
     const dot = ball.vx*nx + ball.vy*ny;
@@ -702,8 +715,8 @@ function handleBounce(cx, cy) {
 }
 
 // ── TRAIL LOOPS ───────────────────────────────────────────
+// Each loop now draws the ring using effectiveCircleRadius instead of circleRadius
 
-// SANDBOX — black ball, white outline, clean white trail
 function loopSandbox(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.35)';
   ctx.fillRect(0, 0, w, h);
@@ -714,7 +727,7 @@ function loopSandbox(w, h, cx, cy) {
     ctx.beginPath(); ctx.arc(t.x, t.y, Math.max(1, t.r * (i/trail.length)), 0, Math.PI*2);
     ctx.fillStyle = `rgba(255,255,255,${alpha})`; ctx.fill();
   }
-  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI*2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
   ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 2; ctx.stroke();
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = '#000'; ctx.fill();
@@ -725,7 +738,6 @@ function loopSandbox(w, h, cx, cy) {
   handleBounce(cx, cy);
 }
 
-// ORIGINAL — colourful ink, barely fades
 function loopOriginal(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.05)';
   ctx.fillRect(0, 0, w, h);
@@ -738,7 +750,7 @@ function loopOriginal(w, h, cx, cy) {
     ctx.fillStyle = `hsl(${t.hue},100%,60%)`; ctx.globalAlpha = 0.4; ctx.fill();
   }
   ctx.globalAlpha = 1;
-  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI*2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
   ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.stroke();
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = '#000'; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
@@ -747,7 +759,6 @@ function loopOriginal(w, h, cx, cy) {
   handleBounce(cx, cy);
 }
 
-// SPARKY — electric blue
 function loopSparky(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.2)';
   ctx.fillRect(0, 0, w, h);
@@ -759,7 +770,7 @@ function loopSparky(w, h, cx, cy) {
     ctx.fillStyle = `hsla(200,100%,60%,${alpha * 0.7})`; ctx.fill();
     ctx.strokeStyle = `hsla(200,100%,80%,${alpha * 0.9})`; ctx.lineWidth = 1.5; ctx.stroke();
   }
-  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI*2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
   ctx.strokeStyle = '#0066ff'; ctx.lineWidth = 2.5; ctx.stroke();
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = '#0052cc'; ctx.fill(); ctx.strokeStyle = '#00ccff'; ctx.lineWidth = 2; ctx.stroke();
@@ -768,7 +779,6 @@ function loopSparky(w, h, cx, cy) {
   handleBounce(cx, cy);
 }
 
-// CHROMATIC — full spectrum
 function loopChromatic(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.28)';
   ctx.fillRect(0, 0, w, h);
@@ -780,7 +790,7 @@ function loopChromatic(w, h, cx, cy) {
     ctx.beginPath(); ctx.arc(t.x, t.y, Math.max(1, t.r * alpha), 0, Math.PI*2);
     ctx.fillStyle = `hsla(${t.hue},100%,60%,${alpha * 0.6})`; ctx.fill();
   }
-  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI*2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
   ctx.strokeStyle = `hsl(${hue},80%,55%)`; ctx.lineWidth = 3; ctx.stroke();
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = `hsl(${hue},100%,70%)`; ctx.fill();
@@ -789,7 +799,6 @@ function loopChromatic(w, h, cx, cy) {
   handleBounce(cx, cy);
 }
 
-// HYPER — rapid flash
 function loopHyper(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.15)';
   ctx.fillRect(0, 0, w, h);
@@ -802,7 +811,7 @@ function loopHyper(w, h, cx, cy) {
     ctx.beginPath(); ctx.arc(t.x, t.y, Math.max(1, t.r * alpha), 0, Math.PI*2);
     ctx.fillStyle = `hsla(${flashHue},100%,65%,${alpha * 0.8})`; ctx.fill();
   }
-  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI*2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
   ctx.strokeStyle = `hsl(${hue},100%,60%)`; ctx.lineWidth = 3; ctx.stroke();
   const ballFlashHue = (hue * 3) % 360;
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
@@ -813,7 +822,6 @@ function loopHyper(w, h, cx, cy) {
   handleBounce(cx, cy);
 }
 
-// NOVA — particle burst
 function spawnParticles(x, y, h, count) {
   for (let i = 0; i < count; i++) {
     const angle = (Math.PI * 2 / count) * i + Math.random() * 0.5;
@@ -842,7 +850,7 @@ function loopNova(w, h, cx, cy) {
   }
   novaPulse = Math.max(0, novaPulse - 0.04);
   ctx.save(); ctx.shadowColor = `hsl(${hue},100%,60%)`; ctx.shadowBlur = 3 + novaPulse * 20;
-  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI*2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
   ctx.strokeStyle = `hsl(${hue},90%,60%)`; ctx.lineWidth = 2 + novaPulse * 3; ctx.stroke(); ctx.restore();
   ctx.save(); ctx.shadowColor = `hsl(${hue},100%,70%)`; ctx.shadowBlur = 15 + novaPulse * 10;
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
@@ -856,12 +864,11 @@ function loopNova(w, h, cx, cy) {
   }
 }
 
-// RADIANT — sun orb, fire trail, ember particles
 function spawnFireParticles(x, y, count) {
   for (let i = 0; i < count; i++) {
     const angle = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 1.6;
     const speed = 1.5 + Math.random() * 4.5;
-    const fireHue = 20 + Math.random() * 40; // deep orange to yellow
+    const fireHue = 20 + Math.random() * 40;
     particles.push({
       x, y,
       vx: Math.cos(angle) * speed,
@@ -876,8 +883,6 @@ function spawnFireParticles(x, y, count) {
 function loopRadiant(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,6,14,0.30)';
   ctx.fillRect(0, 0, w, h);
-
-  // ambient ember drift particles (continuous, not just on bounce)
   if (Math.random() < 0.6) {
     const angle = Math.random() * Math.PI * 2;
     const r = ballRadius * (0.4 + Math.random() * 0.5);
@@ -892,41 +897,33 @@ function loopRadiant(w, h, cx, cy) {
       type: 'fire'
     });
   }
-
-  // update & draw particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
     p.x += p.vx; p.y += p.vy;
     p.vx *= 0.97; p.life -= 0.022;
     if (p.life <= 0) { particles.splice(i, 1); continue; }
-    const pHue = p.hue + (1 - p.life) * 20; // shifts from orange to red as it dies
+    const pHue = p.hue + (1 - p.life) * 20;
     ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
     ctx.fillStyle = `hsla(${pHue},100%,${55 + p.life * 15}%,${p.life * 0.85})`;
     ctx.fill();
   }
-
-  // fire trail
   trail.push({ x: ball.x, y: ball.y, r: ballRadius });
   if (trail.length > 55) trail.shift();
   for (let i = 0; i < trail.length; i++) {
     const t = trail[i], alpha = i / trail.length;
-    const tHue = 30 - (1 - alpha) * 20; // tip yellow, tail red
+    const tHue = 30 - (1 - alpha) * 20;
     const grad = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, t.r * alpha);
     grad.addColorStop(0, `hsla(${tHue + 30},100%,80%,${alpha * 0.7})`);
     grad.addColorStop(1, `hsla(${tHue},100%,45%,0)`);
     ctx.beginPath(); ctx.arc(t.x, t.y, Math.max(1, t.r * alpha), 0, Math.PI * 2);
     ctx.fillStyle = grad; ctx.fill();
   }
-
-  // ring — warm orange glow
   ctx.save();
   ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 8 + novaPulse * 18;
-  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2); // CHANGED
   ctx.strokeStyle = `hsl(${28 + novaPulse * 10},100%,55%)`; ctx.lineWidth = 2.5; ctx.stroke();
   ctx.restore();
   novaPulse = Math.max(0, novaPulse - 0.04);
-
-  // sun ball — radial gradient yellow-white core
   ctx.save();
   ctx.shadowColor = '#ffdd00'; ctx.shadowBlur = 20 + Math.sin(Date.now() * 0.004) * 8;
   const sunGrad = ctx.createRadialGradient(ball.x - ballRadius * 0.3, ball.y - ballRadius * 0.3, 0, ball.x, ball.y, ballRadius);
@@ -937,7 +934,6 @@ function loopRadiant(w, h, cx, cy) {
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
   ctx.fillStyle = sunGrad; ctx.fill();
   ctx.restore();
-
   drawMirrorBall(30); handleMirror(cx, cy);
   ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
   const bounced = handleBounce(cx, cy);
@@ -948,7 +944,6 @@ function loopRadiant(w, h, cx, cy) {
   }
 }
 
-// PRISMATIC — ethereal rainbow, mystical aura particles
 function spawnPrismaticParticles(x, y, count) {
   for (let i = 0; i < count; i++) {
     const angle = (Math.PI * 2 / count) * i + Math.random() * 0.4;
@@ -969,8 +964,6 @@ function loopPrismatic(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,5,18,0.20)';
   ctx.fillRect(0, 0, w, h);
   prismaticHue = (prismaticHue + 0.5) % 360;
-
-  // continuous floating aura motes
   if (Math.random() < 0.55) {
     const angle = Math.random() * Math.PI * 2;
     const r = ballRadius * (0.6 + Math.random() * 1.2);
@@ -985,8 +978,6 @@ function loopPrismatic(w, h, cx, cy) {
       type: 'prismatic'
     });
   }
-
-  // update particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
     p.x += p.vx; p.y += p.vy;
@@ -1001,8 +992,6 @@ function loopPrismatic(w, h, cx, cy) {
     ctx.fillStyle = `hsla(${p.hue},100%,75%,${p.life * 0.9})`;
     ctx.fill(); ctx.restore();
   }
-
-  // beautiful rainbow trail — each segment a different hue, wide & soft
   trail.push({ x: ball.x, y: ball.y, hue: prismaticHue, r: ballRadius });
   if (trail.length > 110) trail.shift();
   for (let i = 0; i < trail.length; i++) {
@@ -1019,16 +1008,12 @@ function loopPrismatic(w, h, cx, cy) {
     ctx.beginPath(); ctx.arc(t.x, t.y, size, 0, Math.PI * 2);
     ctx.fillStyle = grad; ctx.fill(); ctx.restore();
   }
-
-  // ring — slowly cycling rainbow
   ctx.save();
   ctx.shadowColor = `hsl(${prismaticHue},100%,65%)`; ctx.shadowBlur = 10 + novaPulse * 20;
-  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2); // CHANGED
   ctx.strokeStyle = `hsl(${prismaticHue},90%,65%)`; ctx.lineWidth = 2.5 + novaPulse * 2; ctx.stroke();
   ctx.restore();
   novaPulse = Math.max(0, novaPulse - 0.035);
-
-  // ball — mystical glowing orb, shifting rainbow gradient
   const bHue1 = prismaticHue;
   const bHue2 = (prismaticHue + 120) % 360;
   const bHue3 = (prismaticHue + 240) % 360;
@@ -1040,11 +1025,9 @@ function loopPrismatic(w, h, cx, cy) {
   ballGrad.addColorStop(1, `hsl(${bHue3},100%,55%)`);
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
   ctx.fillStyle = ballGrad; ctx.fill();
-  // outer glow ring
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius + 3, 0, Math.PI * 2);
   ctx.strokeStyle = `hsla(${bHue2},100%,80%,0.5)`; ctx.lineWidth = 2; ctx.stroke();
   ctx.restore();
-
   drawMirrorBall(prismaticHue); handleMirror(cx, cy);
   ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
   const bounced = handleBounce(cx, cy);
@@ -1054,13 +1037,12 @@ function loopPrismatic(w, h, cx, cy) {
     app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 120);
   }
 }
+
 let illuminationHue = 0;
 function loopIllumination(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,5,18,0.18)';
   ctx.fillRect(0, 0, w, h);
   illuminationHue = (illuminationHue + 0.2) % 360;
-
-  // floating light motes
   if (Math.random() < 0.6) {
     const angle = Math.random() * Math.PI * 2;
     const r = ballRadius * (0.8 + Math.random() * 1.5);
@@ -1075,8 +1057,6 @@ function loopIllumination(w, h, cx, cy) {
       type: 'illumination'
     });
   }
-
-  // update particles
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
     p.x += p.vx; p.y += p.vy;
@@ -1090,8 +1070,6 @@ function loopIllumination(w, h, cx, cy) {
     ctx.fillStyle = `rgba(255,255,255,${p.life * 0.85})`;
     ctx.fill(); ctx.restore();
   }
-
-  // white glowing trail
   trail.push({ x: ball.x, y: ball.y, r: ballRadius });
   if (trail.length > 100) trail.shift();
   for (let i = 0; i < trail.length; i++) {
@@ -1106,17 +1084,13 @@ function loopIllumination(w, h, cx, cy) {
     ctx.beginPath(); ctx.arc(t2.x, t2.y, Math.max(1, t2.r * alpha), 0, Math.PI * 2);
     ctx.fillStyle = grad; ctx.fill(); ctx.restore();
   }
-
-  // ring — soft white divine glow
   ctx.save();
   ctx.shadowColor = 'rgba(255,255,255,0.9)';
   ctx.shadowBlur = 14 + novaPulse * 28;
-  ctx.beginPath(); ctx.arc(cx, cy, circleRadius, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2); // CHANGED
   ctx.strokeStyle = `rgba(220,240,255,${0.4 + novaPulse * 0.4})`;
   ctx.lineWidth = 2 + novaPulse * 3; ctx.stroke(); ctx.restore();
   novaPulse = Math.max(0, novaPulse - 0.035);
-
-  // angelic orb
   ctx.save();
   ctx.shadowColor = 'rgba(255,255,255,1)';
   ctx.shadowBlur = 30 + Math.sin(Date.now() * 0.003) * 10;
@@ -1129,17 +1103,14 @@ function loopIllumination(w, h, cx, cy) {
   ballGrad.addColorStop(1, 'rgba(180,215,255,0.7)');
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
   ctx.fillStyle = ballGrad; ctx.fill();
-  // outer divine ring
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius + 4, 0, Math.PI * 2);
   ctx.strokeStyle = `rgba(255,255,255,${0.3 + Math.sin(Date.now() * 0.004) * 0.15})`;
   ctx.lineWidth = 2; ctx.stroke();
   ctx.restore();
-
   drawMirrorBall(200); handleMirror(cx, cy);
   ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
   const bounced = handleBounce(cx, cy);
   if (bounced) {
-    // burst of white motes on bounce
     for (let i = 0; i < 20; i++) {
       const angle = (Math.PI * 2 / 20) * i + Math.random() * 0.3;
       const speed2 = 1.5 + Math.random() * 4;
