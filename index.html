@@ -24,7 +24,7 @@
         <div class="divider"></div>
         <div class="btn-group">
           <button class="btn primary" id="playBtn"><span class="btn-dot"></span>Play</button>
-          <button class="btn primary" id="shopBtn"><span class="btn-dot"></span>Shop</button>
+          <button class="btn primary" id="inventoryBtn"><span class="btn-dot"></span>Inventory</button>
           <button class="btn" id="settingsBtn"><span class="btn-dot"></span>Settings</button>
         </div>
       </div>
@@ -62,15 +62,15 @@
       <button class="back-btn" id="settingsBackBtn">Back</button>
     </div>
 
-    <!-- SHOP -->
-    <div id="shopScreen" class="screen hidden">
+    <!-- INVENTORY -->
+    <div id="inventoryScreen" class="screen hidden">
       <div class="grid-bg"></div><div class="scanline"></div>
       <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
       <div class="shop-scanline-overlay"></div>
 
       <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;width:100%;max-width:500px;padding:0 20px;gap:20px;">
         <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
-          <div class="shop-title-label">SHOP</div>
+          <div class="shop-title-label">Inventory</div>
           <div class="shop-divider"></div>
         </div>
 
@@ -80,13 +80,13 @@
             <div class="shop-balance-label">Total Bounces</div>
             <div class="shop-balance-value" id="shopBounceDisplay">0</div>
           </div>
-          <div class="shop-balance-subtext">your currency</div>
+          <div class="shop-balance-subtext">all time</div>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:10px;width:100%;overflow-y:auto;max-height:55vh;padding-right:2px;" id="shopItemsList"></div>
       </div>
 
-      <button class="back-btn" id="shopBackBtn">Back</button>
+      <button class="back-btn" id="inventoryBackBtn">Back</button>
     </div>
 
     <!-- GAME -->
@@ -110,7 +110,6 @@
           <button id="attrMirror" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;">OFF</button>
         </div>
 
-        <!-- NEW: Shrink attribute -->
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <span style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#a0c4ff;text-transform:uppercase;">Shrink Map</span>
           <button id="attrShrink" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;">OFF</button>
