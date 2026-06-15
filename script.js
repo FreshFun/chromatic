@@ -3,11 +3,11 @@ let particles = [];
 let novaPulse = 0;
 let attrZen = false;
 let attrMirror = false;
-let attrShrink = false;        // NEW
-let shrinkAmount = 0;          // NEW — how many pixels the circle has shrunk so far
-const SHRINK_RATE = 0.10;      // NEW — pixels shrunk per frame
-const SHRINK_MIN = 80;         // NEW — smallest the circle can get
-let effectiveCircleRadius = 0; // NEW — the actual radius used for drawing + collision
+let attrShrink = false;
+let shrinkAmount = 0;
+const SHRINK_RATE = 0.10;
+const SHRINK_MIN = 80;
+let effectiveCircleRadius = 0;
 let mirrorBall = {};
 let attrMenuOpen = false;
 let sfxEnabled = true;
@@ -28,12 +28,6 @@ function loadTotalBounces() {
 function saveTotalBounces(n) {
   try { localStorage.setItem('chromatic_total_bounces', String(n)); } catch(e) {}
 }
-function loadOwned() {
-  try { return JSON.parse(localStorage.getItem('chromatic_owned') || '["sandbox"]'); } catch(e) { return ['sandbox']; }
-}
-function saveOwned(arr) {
-  try { localStorage.setItem('chromatic_owned', JSON.stringify(arr)); } catch(e) {}
-}
 function loadEquipped() {
   try { return localStorage.getItem('chromatic_equipped') || 'sandbox'; } catch(e) { return 'sandbox'; }
 }
@@ -42,15 +36,10 @@ function saveEquipped(id) {
 }
 
 let totalBounces = loadTotalBounces();
-let ownedTrails = loadOwned();
 let equippedTrail = loadEquipped();
 
 function addBounces(n) {
   totalBounces += n;
-  saveTotalBounces(totalBounces);
-}
-function spendBounces(n) {
-  totalBounces = Math.max(0, totalBounces - n);
   saveTotalBounces(totalBounces);
 }
 
@@ -60,8 +49,6 @@ const TRAILS = [
     id: 'sandbox',
     name: 'Sandbox',
     desc: 'Default — minimal & clean',
-    price: 0,
-    free: true,
     previewBg: '#000',
     previewBorder: 'rgba(255,255,255,0.4)',
     previewDot: '#fff'
@@ -70,7 +57,6 @@ const TRAILS = [
     id: 'original',
     name: 'Original',
     desc: 'Colourful ink that never fades',
-    price: 500,
     previewBg: 'linear-gradient(135deg,#ff006680,#ffaa0080)',
     previewBorder: 'rgba(255,180,0,0.6)',
     previewDot: '#ffcc00'
@@ -79,7 +65,6 @@ const TRAILS = [
     id: 'sparky',
     name: 'Sparky',
     desc: 'Electric blue streak',
-    price: 800,
     previewBg: 'linear-gradient(135deg,#0044cc80,#00ccff80)',
     previewBorder: 'rgba(0,200,255,0.6)',
     previewDot: '#00ccff'
@@ -88,7 +73,6 @@ const TRAILS = [
     id: 'chromatic',
     name: 'Chromatic',
     desc: 'Full spectrum rainbow trail',
-    price: 1300,
     previewBg: 'linear-gradient(135deg,#ff000080,#00ff0080,#0000ff80)',
     previewBorder: 'rgba(180,100,255,0.6)',
     previewDot: '#cc44ff'
@@ -97,7 +81,6 @@ const TRAILS = [
     id: 'hyper',
     name: 'Hyper',
     desc: 'Rapid colour-flashing chaos',
-    price: 2800,
     previewBg: 'linear-gradient(135deg,#ff440080,#ff00ff80)',
     previewBorder: 'rgba(255,80,255,0.6)',
     previewDot: '#ff44ff'
@@ -106,7 +89,6 @@ const TRAILS = [
     id: 'nova',
     name: 'Nova',
     desc: 'Glowing burst on every bounce',
-    price: 6000,
     previewBg: 'linear-gradient(135deg,#ffaa0080,#ff440080)',
     previewBorder: 'rgba(255,160,0,0.6)',
     previewDot: '#ffaa00'
@@ -115,7 +97,6 @@ const TRAILS = [
     id: 'radiant',
     name: 'Radiant',
     desc: 'Solar orb with fire trail & embers',
-    price: 12000,
     previewBg: 'radial-gradient(circle,#ffee0080,#ff660080)',
     previewBorder: 'rgba(255,160,0,0.8)',
     previewDot: '#ffe000'
@@ -124,7 +105,6 @@ const TRAILS = [
     id: 'prismatic',
     name: 'Prismatic',
     desc: 'Ethereal rainbow with mystical aura',
-    price: 25500,
     previewBg: 'linear-gradient(135deg,#ff00ff80,#00ffff80,#ffff0080)',
     previewBorder: 'rgba(220,180,255,0.8)',
     previewDot: '#e0aaff'
@@ -133,7 +113,6 @@ const TRAILS = [
     id: 'illumination',
     name: 'Illumination',
     desc: 'Angelic white glow, divine light',
-    price: 35000,
     previewBg: 'radial-gradient(circle,#ffffff80,#aaddff80)',
     previewBorder: 'rgba(255,255,255,0.8)',
     previewDot: '#ffffff'
@@ -141,16 +120,14 @@ const TRAILS = [
 ];
 
 
-// ── SHOP UI ───────────────────────────────────────────────
+// ── INVENTORY UI ──────────────────────────────────────────
 function renderShop() {
   document.getElementById('shopBounceDisplay').textContent = totalBounces.toLocaleString();
   const list = document.getElementById('shopItemsList');
   list.innerHTML = '';
 
   TRAILS.forEach(trail => {
-    const owned = ownedTrails.includes(trail.id);
     const isEquipped = equippedTrail === trail.id;
-    const canAfford = totalBounces >= trail.price;
 
     const item = document.createElement('div');
     item.className = 'shop-item' + (isEquipped ? ' equipped' : '');
@@ -168,14 +145,13 @@ function renderShop() {
     info.innerHTML = `
       <div class="shop-item-name">${trail.name}</div>
       <div class="shop-item-desc">${trail.desc}</div>
-      ${!trail.free && !owned ? `<div class="shop-item-price">◈ ${trail.price.toLocaleString()}</div>` : ''}
     `;
 
     const btn = document.createElement('button');
     if (isEquipped) {
       btn.textContent = 'Equipped';
       btn.className = 'shop-item-btn equipped-btn';
-    } else if (owned) {
+    } else {
       btn.textContent = 'Equip';
       btn.className = 'shop-item-btn equip-btn';
       btn.addEventListener('click', () => {
@@ -185,21 +161,6 @@ function renderShop() {
         renderShop();
         showToast(`${trail.name} equipped`);
       });
-    } else if (canAfford) {
-      btn.textContent = 'Buy';
-      btn.className = 'shop-item-btn';
-      btn.addEventListener('click', () => {
-        playClickSfx();
-        spendBounces(trail.price);
-        ownedTrails.push(trail.id);
-        saveOwned(ownedTrails);
-        renderShop();
-        showToast(`${trail.name} unlocked`);
-      });
-    } else {
-      btn.textContent = `◈ ${trail.price.toLocaleString()}`;
-      btn.className = 'shop-item-btn cant-afford';
-      btn.disabled = true;
     }
 
     item.appendChild(preview);
@@ -493,7 +454,7 @@ const menuScreen = document.getElementById('menuScreen');
 const modeScreen = document.getElementById('modeScreen');
 const gameScreen = document.getElementById('gameScreen');
 const settingsScreen = document.getElementById('settingsScreen');
-const shopScreen = document.getElementById('shopScreen');
+const inventoryScreen = document.getElementById('inventoryScreen');
 const modeLabel = document.getElementById('modeLabel');
 let animId = null, bounces = 0, ball = {}, trail = [];
 let circleRadius = 0, ballRadius = 0, hue = 0, currentSpeed = 0;
@@ -507,7 +468,7 @@ window.addEventListener('resize', () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     circleRadius = Math.min(canvas.width, canvas.height) * 0.38;
-    effectiveCircleRadius = circleRadius - shrinkAmount; // keep in sync on resize
+    effectiveCircleRadius = circleRadius - shrinkAmount;
   }
 });
 document.getElementById('app').addEventListener('click', () => {
@@ -527,27 +488,26 @@ document.getElementById('settingsBackBtn').addEventListener('click', () => {
 document.getElementById('backBtn').addEventListener('click', () => {
   playClickSfx(); modeScreen.classList.add('hidden'); menuScreen.classList.remove('hidden');
 });
-document.getElementById('shopBtn').addEventListener('click', () => {
+document.getElementById('inventoryBtn').addEventListener('click', () => {
   playClickSfx();
   menuScreen.classList.add('hidden');
-  shopScreen.classList.remove('hidden');
+  inventoryScreen.classList.remove('hidden');
   renderShop();
 });
-document.getElementById('shopBackBtn').addEventListener('click', () => {
+document.getElementById('inventoryBackBtn').addEventListener('click', () => {
   playClickSfx();
-  shopScreen.classList.add('hidden');
+  inventoryScreen.classList.add('hidden');
   menuScreen.classList.remove('hidden');
 });
 document.getElementById('gameBackBtn').addEventListener('click', () => {
   playClickSfx(); stopGame();
   gameScreen.classList.add('hidden'); menuScreen.classList.remove('hidden');
   attrMenuOpen = false; attrZen = false; attrMirror = false; GRAVITY = GRAVITY_DEFAULT;
-  // Reset shrink
   attrShrink = false; shrinkAmount = 0;
   document.getElementById('attrMenu').style.display = 'none';
   updateAttrBtn('attrZen', false);
   updateAttrBtn('attrMirror', false);
-  updateAttrBtn('attrShrink', false); // NEW
+  updateAttrBtn('attrShrink', false);
   if (musicEnabled && musicStarted) startMusic();
 });
 document.getElementById('attrBtn').addEventListener('click', () => {
@@ -571,11 +531,10 @@ document.getElementById('attrMirror').addEventListener('click', () => {
   if (attrMirror) spawnMirrorBall(canvas.width, canvas.height);
 });
 
-// NEW — Shrink toggle
 document.getElementById('attrShrink').addEventListener('click', () => {
   playClickSfx();
   attrShrink = !attrShrink;
-  shrinkAmount = 0; // reset progress when toggled
+  shrinkAmount = 0;
   effectiveCircleRadius = circleRadius;
   updateAttrBtn('attrShrink', attrShrink);
 });
@@ -620,8 +579,8 @@ function startGame() {
   canvas.width = window.innerWidth; canvas.height = window.innerHeight;
   const w = canvas.width, h = canvas.height;
   circleRadius = Math.min(w, h) * 0.38;
-  shrinkAmount = 0;                      // NEW — reset shrink on new game
-  effectiveCircleRadius = circleRadius;  // NEW
+  shrinkAmount = 0;
+  effectiveCircleRadius = circleRadius;
   ballRadius = 10; bounces = 0; trail = []; hue = 0;
   currentSpeed = START_SPEED;
   document.getElementById('bounceCount').textContent = 'Bounces: 0';
@@ -665,7 +624,6 @@ function handleMirror(cx, cy) {
   }
   const mdx = mirrorBall.x - cx, mdy = mirrorBall.y - cy;
   const mdist = Math.sqrt(mdx*mdx + mdy*mdy);
-  // mirror ball also respects the shrinking radius
   const mmaxDist = effectiveCircleRadius - ballRadius;
   if (mdist >= mmaxDist) {
     const mnx = mdx/mdist, mny = mdy/mdist;
@@ -686,7 +644,6 @@ function drawMirrorBall(mhue) {
 
 // ── HANDLE BOUNCE (with Shrink built in) ──────────────────
 function handleBounce(cx, cy) {
-  // NEW — update the effective radius every frame when shrink is on
   if (attrShrink) {
     const minAllowed = SHRINK_MIN + ballRadius;
     shrinkAmount = shrinkAmount + SHRINK_RATE;
@@ -695,7 +652,7 @@ function handleBounce(cx, cy) {
 
   const dx = ball.x - cx, dy = ball.y - cy;
   const dist = Math.sqrt(dx*dx + dy*dy);
-  const maxDist = effectiveCircleRadius - ballRadius; // uses shrunk radius
+  const maxDist = effectiveCircleRadius - ballRadius;
   if (dist >= maxDist) {
     const nx = dx/dist, ny = dy/dist;
     const dot = ball.vx*nx + ball.vy*ny;
@@ -715,8 +672,6 @@ function handleBounce(cx, cy) {
 }
 
 // ── TRAIL LOOPS ───────────────────────────────────────────
-// Each loop now draws the ring using effectiveCircleRadius instead of circleRadius
-
 function loopSandbox(w, h, cx, cy) {
   ctx.fillStyle = 'rgba(2,11,24,0.35)';
   ctx.fillRect(0, 0, w, h);
@@ -727,7 +682,7 @@ function loopSandbox(w, h, cx, cy) {
     ctx.beginPath(); ctx.arc(t.x, t.y, Math.max(1, t.r * (i/trail.length)), 0, Math.PI*2);
     ctx.fillStyle = `rgba(255,255,255,${alpha})`; ctx.fill();
   }
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2);
   ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 2; ctx.stroke();
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = '#000'; ctx.fill();
@@ -750,7 +705,7 @@ function loopOriginal(w, h, cx, cy) {
     ctx.fillStyle = `hsl(${t.hue},100%,60%)`; ctx.globalAlpha = 0.4; ctx.fill();
   }
   ctx.globalAlpha = 1;
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2);
   ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.stroke();
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = '#000'; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
@@ -770,7 +725,7 @@ function loopSparky(w, h, cx, cy) {
     ctx.fillStyle = `hsla(200,100%,60%,${alpha * 0.7})`; ctx.fill();
     ctx.strokeStyle = `hsla(200,100%,80%,${alpha * 0.9})`; ctx.lineWidth = 1.5; ctx.stroke();
   }
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2);
   ctx.strokeStyle = '#0066ff'; ctx.lineWidth = 2.5; ctx.stroke();
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = '#0052cc'; ctx.fill(); ctx.strokeStyle = '#00ccff'; ctx.lineWidth = 2; ctx.stroke();
@@ -790,7 +745,7 @@ function loopChromatic(w, h, cx, cy) {
     ctx.beginPath(); ctx.arc(t.x, t.y, Math.max(1, t.r * alpha), 0, Math.PI*2);
     ctx.fillStyle = `hsla(${t.hue},100%,60%,${alpha * 0.6})`; ctx.fill();
   }
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2);
   ctx.strokeStyle = `hsl(${hue},80%,55%)`; ctx.lineWidth = 3; ctx.stroke();
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = `hsl(${hue},100%,70%)`; ctx.fill();
@@ -811,7 +766,7 @@ function loopHyper(w, h, cx, cy) {
     ctx.beginPath(); ctx.arc(t.x, t.y, Math.max(1, t.r * alpha), 0, Math.PI*2);
     ctx.fillStyle = `hsla(${flashHue},100%,65%,${alpha * 0.8})`; ctx.fill();
   }
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2);
   ctx.strokeStyle = `hsl(${hue},100%,60%)`; ctx.lineWidth = 3; ctx.stroke();
   const ballFlashHue = (hue * 3) % 360;
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
@@ -850,7 +805,7 @@ function loopNova(w, h, cx, cy) {
   }
   novaPulse = Math.max(0, novaPulse - 0.04);
   ctx.save(); ctx.shadowColor = `hsl(${hue},100%,60%)`; ctx.shadowBlur = 3 + novaPulse * 20;
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2); // CHANGED
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2);
   ctx.strokeStyle = `hsl(${hue},90%,60%)`; ctx.lineWidth = 2 + novaPulse * 3; ctx.stroke(); ctx.restore();
   ctx.save(); ctx.shadowColor = `hsl(${hue},100%,70%)`; ctx.shadowBlur = 15 + novaPulse * 10;
   ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
@@ -920,7 +875,7 @@ function loopRadiant(w, h, cx, cy) {
   }
   ctx.save();
   ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 8 + novaPulse * 18;
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2); // CHANGED
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2);
   ctx.strokeStyle = `hsl(${28 + novaPulse * 10},100%,55%)`; ctx.lineWidth = 2.5; ctx.stroke();
   ctx.restore();
   novaPulse = Math.max(0, novaPulse - 0.04);
@@ -1010,7 +965,7 @@ function loopPrismatic(w, h, cx, cy) {
   }
   ctx.save();
   ctx.shadowColor = `hsl(${prismaticHue},100%,65%)`; ctx.shadowBlur = 10 + novaPulse * 20;
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2); // CHANGED
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2);
   ctx.strokeStyle = `hsl(${prismaticHue},90%,65%)`; ctx.lineWidth = 2.5 + novaPulse * 2; ctx.stroke();
   ctx.restore();
   novaPulse = Math.max(0, novaPulse - 0.035);
@@ -1087,7 +1042,7 @@ function loopIllumination(w, h, cx, cy) {
   ctx.save();
   ctx.shadowColor = 'rgba(255,255,255,0.9)';
   ctx.shadowBlur = 14 + novaPulse * 28;
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2); // CHANGED
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2);
   ctx.strokeStyle = `rgba(220,240,255,${0.4 + novaPulse * 0.4})`;
   ctx.lineWidth = 2 + novaPulse * 3; ctx.stroke(); ctx.restore();
   novaPulse = Math.max(0, novaPulse - 0.035);
