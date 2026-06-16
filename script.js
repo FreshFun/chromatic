@@ -120,10 +120,18 @@ const TRAILS = [
   {
     id: 'quantum',
     name: 'Quantum',
-    desc: 'Cobalt blue voltage, Electric',
+    desc: '⚡ Dark cobalt · cyan arcs · raw voltage',
     previewBg: 'radial-gradient(circle,#00eeff60,#0033aa80,#000d2280)',
     previewBorder: 'rgba(0,220,255,0.9)',
     previewDot: '#00eeff'
+  },
+  {
+    id: 'timeless',
+    name: 'Timeless',
+    desc: 'Emerald glass · aquamarine time-stop',
+    previewBg: 'radial-gradient(circle,#00ff9960,#00776640,#001a0e80)',
+    previewBorder: 'rgba(0,255,160,0.85)',
+    previewDot: '#00ffaa'
   }
 ];
 
@@ -255,6 +263,7 @@ function playBounceSfx(speed, trailId) {
     case 'prismatic':    playBouncePrismaticSfx(speed);    break;
     case 'illumination': playBounceIlluminationSfx(speed); break;
     case 'quantum':      playBounceQuantumSfx(speed);      break;
+    case 'timeless':     playBounceTimelessSfx(speed);     break;
     default:             playBounceSandboxSfx(speed);      break;
   }
 }
@@ -706,6 +715,7 @@ function loop() {
   else if (t === 'prismatic')    loopPrismatic(w, h, cx, cy);
   else if (t === 'illumination') loopIllumination(w, h, cx, cy);
   else if (t === 'quantum')      loopQuantum(w, h, cx, cy);
+  else if (t === 'timeless')     loopTimeless(w, h, cx, cy);
   else                           loopSandbox(w, h, cx, cy);
   animId = requestAnimationFrame(loop);
 }
@@ -1425,5 +1435,293 @@ function loopQuantum(w, h, cx, cy) {
         'rgba(160,236,255,1)');
     }
     app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 120);
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════
+// ── TIMELESS TRAIL ────────────────────────────────────────
+// Emerald glass orb · aquamarine clockwork ring · time-stop
+// ══════════════════════════════════════════════════════════
+
+function playBounceTimelessSfx(speed) {
+  const t = audioCtx.currentTime;
+  const base = Math.min(1800, 500 + speed * 40);
+
+  // 1. Glassy PING — high crystalline strike that rings out long
+  const ping = audioCtx.createOscillator(), pg = audioCtx.createGain();
+  ping.type = 'sine';
+  ping.frequency.setValueAtTime(base * 2.4, t);
+  ping.frequency.linearRampToValueAtTime(base * 2.42, t + 0.06);
+  ping.frequency.linearRampToValueAtTime(base * 1.8, t + 0.8);
+  pg.gain.setValueAtTime(0.35, t);
+  pg.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
+  ping.connect(pg); pg.connect(audioCtx.destination);
+  ping.start(t); ping.stop(t + 1.05);
+
+  // 2. Sub-harmonic THUD — time grinding to a halt
+  const sub = audioCtx.createOscillator(), sg = audioCtx.createGain();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(60, t);
+  sub.frequency.exponentialRampToValueAtTime(18, t + 0.5);
+  sg.gain.setValueAtTime(0.38, t);
+  sg.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+  sub.connect(sg); sg.connect(audioCtx.destination);
+  sub.start(t); sub.stop(t + 0.6);
+
+  // 3. Reverse-shimmer — triangle sweep upward (time rewinding feeling)
+  const rev = audioCtx.createOscillator(), rg = audioCtx.createGain();
+  rev.type = 'triangle';
+  rev.frequency.setValueAtTime(base * 0.3, t + 0.05);
+  rev.frequency.exponentialRampToValueAtTime(base * 3.5, t + 0.35);
+  rg.gain.setValueAtTime(0.001, t + 0.05);
+  rg.gain.linearRampToValueAtTime(0.20, t + 0.20);
+  rg.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+  rev.connect(rg); rg.connect(audioCtx.destination);
+  rev.start(t + 0.05); rev.stop(t + 0.4);
+
+  // 4. Glass harmonic series — multiple overtones, very pure
+  const harmonics = [1, 1.5, 2.0, 2.8, 4.0];
+  const vols      = [0.20, 0.13, 0.09, 0.06, 0.04];
+  harmonics.forEach((mult, i) => {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(base * mult, t);
+    o.frequency.linearRampToValueAtTime(base * mult * 1.003, t + 0.05);
+    g.gain.setValueAtTime(vols[i], t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.9 - i * 0.1);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(t); o.stop(t + 1.0);
+  });
+
+  // 5. Time-stop DRONE — low aquamarine hum that decays slowly
+  const drone = audioCtx.createOscillator(), dg = audioCtx.createGain();
+  drone.type = 'triangle';
+  drone.frequency.setValueAtTime(base * 0.18, t + 0.1);
+  drone.frequency.linearRampToValueAtTime(base * 0.16, t + 0.7);
+  dg.gain.setValueAtTime(0.14, t + 0.1);
+  dg.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+  drone.connect(dg); dg.connect(audioCtx.destination);
+  drone.start(t + 0.1); drone.stop(t + 0.8);
+
+  // 6. Crystal chime tail — two detuned sines beating against each other
+  const ch1 = audioCtx.createOscillator(), cg1 = audioCtx.createGain();
+  const ch2 = audioCtx.createOscillator(), cg2 = audioCtx.createGain();
+  ch1.type = 'sine'; ch1.frequency.value = base * 3.1;
+  ch2.type = 'sine'; ch2.frequency.value = base * 3.108;
+  cg1.gain.setValueAtTime(0.08, t + 0.15); cg1.gain.exponentialRampToValueAtTime(0.001, t + 1.2);
+  cg2.gain.setValueAtTime(0.08, t + 0.15); cg2.gain.exponentialRampToValueAtTime(0.001, t + 1.2);
+  ch1.connect(cg1); cg1.connect(audioCtx.destination); ch1.start(t + 0.15); ch1.stop(t + 1.25);
+  ch2.connect(cg2); cg2.connect(audioCtx.destination); ch2.start(t + 0.15); ch2.stop(t + 1.25);
+}
+
+function spawnTimelessParticles(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i + (Math.random() - 0.5) * 0.5;
+    const spd = 1.8 + Math.random() * 5.5;
+    const isAqua = Math.random() > 0.4;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * spd,
+      vy: Math.sin(angle) * spd,
+      hue: isAqua ? 160 + Math.random() * 25 : 145 + Math.random() * 15,
+      life: 1.0,
+      r: 1.2 + Math.random() * 3.2,
+      type: 'timeless',
+      isGlass: Math.random() > 0.5
+    });
+  }
+}
+
+function spawnTimelessMote() {
+  const angle = Math.random() * Math.PI * 2;
+  const r = ballRadius * (1.2 + Math.random() * 2.5);
+  particles.push({
+    x: ball.x + Math.cos(angle) * r,
+    y: ball.y + Math.sin(angle) * r,
+    vx: (Math.random() - 0.5) * 0.6,
+    vy: -(0.15 + Math.random() * 0.55),
+    hue: 155 + Math.random() * 30,
+    life: 0.5 + Math.random() * 0.5,
+    r: 0.7 + Math.random() * 2.0,
+    type: 'timeless_mote'
+  });
+}
+
+let timelessFlash = 0;
+let timelessRingPhase = 0;
+
+function loopTimeless(w, h, cx, cy) {
+  ctx.fillStyle = 'rgba(0,8,6,0.30)';
+  ctx.fillRect(0, 0, w, h);
+
+  const now = Date.now();
+  timelessRingPhase += 0.018;
+
+  // ── 1. Ambient glass motes ──
+  if (Math.random() < 0.65) spawnTimelessMote();
+
+  // ── 2. Update & draw all particles ──
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.96; p.vy *= 0.96;
+    p.life -= p.type === 'timeless_mote' ? 0.018 : 0.020;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+
+    if (p.type === 'timeless_mote') {
+      ctx.save();
+      ctx.shadowColor = `hsla(${p.hue},100%,68%,${p.life})`;
+      ctx.shadowBlur = 10 * p.life;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${p.hue},100%,78%,${p.life * 0.80})`;
+      ctx.fill(); ctx.restore();
+    } else if (p.isGlass) {
+      // Glass shard — thin elongated bright streak
+      ctx.save();
+      ctx.shadowColor = `hsla(${p.hue},100%,80%,${p.life})`;
+      ctx.shadowBlur = 14 * p.life;
+      ctx.globalAlpha = p.life * 0.85;
+      ctx.strokeStyle = `hsla(${p.hue},100%,88%,1)`;
+      ctx.lineWidth = 0.8 + p.r * 0.3;
+      ctx.beginPath();
+      const dx = p.vx * 4, dy = p.vy * 4;
+      ctx.moveTo(p.x - dx, p.y - dy);
+      ctx.lineTo(p.x + dx, p.y + dy);
+      ctx.stroke(); ctx.restore();
+    } else {
+      ctx.save();
+      ctx.shadowColor = `hsla(${p.hue},100%,70%,1)`;
+      ctx.shadowBlur = 16 * p.life;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${p.hue},100%,80%,${p.life * 0.95})`;
+      ctx.fill(); ctx.restore();
+    }
+  }
+
+  // ── 3. Glass trail ──
+  trail.push({ x: ball.x, y: ball.y, r: ballRadius, t: now });
+  if (trail.length > 95) trail.shift();
+  for (let i = 0; i < trail.length; i++) {
+    const pt = trail[i], alpha = i / trail.length;
+    const size = Math.max(1, pt.r * alpha * 0.58);
+    const trailHue = 145 + alpha * 35;
+    ctx.save();
+    ctx.shadowColor = `hsla(${trailHue},100%,62%,${alpha})`;
+    ctx.shadowBlur = 12 * alpha;
+    const tg = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, size);
+    tg.addColorStop(0, `hsla(160,80%,92%,${alpha * 0.92})`);
+    tg.addColorStop(0.4, `hsla(${trailHue},100%,62%,${alpha * 0.75})`);
+    tg.addColorStop(1, `hsla(155,100%,30%,0)`);
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, size, 0, Math.PI * 2);
+    ctx.fillStyle = tg; ctx.fill();
+    ctx.restore();
+  }
+
+  // ── 4. Containment ring — rotating arc segments + pulse ──
+  timelessFlash = Math.max(0, timelessFlash - 0.038);
+  const ringPulse = 0.5 + Math.sin(now * 0.0025) * 0.5;
+
+  // Main ring
+  ctx.save();
+  ctx.shadowColor = `rgba(0,255,160,${0.45 + timelessFlash * 0.55})`;
+  ctx.shadowBlur = 10 + timelessFlash * 30 + ringPulse * 5;
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(0,${210 + timelessFlash * 45},${130 + timelessFlash * 80},${0.5 + timelessFlash * 0.45})`;
+  ctx.lineWidth = 2 + timelessFlash * 3; ctx.stroke();
+  ctx.restore();
+
+  // Rotating dashed arc overlay — clockwork feel
+  ctx.save();
+  ctx.globalAlpha = 0.22 + timelessFlash * 0.25;
+  ctx.shadowColor = '#00ffaa'; ctx.shadowBlur = 8;
+  ctx.strokeStyle = '#00ffaa'; ctx.lineWidth = 1;
+  ctx.setLineDash([8, 14]);
+  ctx.lineDashOffset = -timelessRingPhase * 40;
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius + 5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // Inner subtle ring
+  ctx.save();
+  ctx.globalAlpha = 0.10 + timelessFlash * 0.15;
+  ctx.strokeStyle = '#00ee88'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius - 6, 0, Math.PI * 2);
+  ctx.stroke(); ctx.restore();
+
+  // ── 5. Ball — emerald glass orb ──
+  const ballPulse = Math.sin(now * 0.004) * 0.5 + 0.5;
+  ctx.save();
+  ctx.shadowColor = `rgba(0,255,140,${0.75 + timelessFlash * 0.25})`;
+  ctx.shadowBlur = 24 + timelessFlash * 22 + ballPulse * 6;
+
+  // Outer soft glow corona
+  const coronaGrad = ctx.createRadialGradient(ball.x, ball.y, ballRadius * 0.6, ball.x, ball.y, ballRadius * 2.2);
+  coronaGrad.addColorStop(0, `rgba(0,220,140,${0.15 + timelessFlash * 0.12})`);
+  coronaGrad.addColorStop(1, 'rgba(0,40,20,0)');
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius * 2.2, 0, Math.PI * 2);
+  ctx.fillStyle = coronaGrad; ctx.fill();
+
+  // Glass ball — off-centre highlight sells the glass look
+  const ballGrad = ctx.createRadialGradient(
+    ball.x - ballRadius * 0.38, ball.y - ballRadius * 0.42, ballRadius * 0.05,
+    ball.x, ball.y, ballRadius
+  );
+  ballGrad.addColorStop(0,    'rgba(230,255,245,1)');
+  ballGrad.addColorStop(0.18, 'rgba(180,255,220,0.95)');
+  ballGrad.addColorStop(0.45, 'rgba(0,200,120,0.88)');
+  ballGrad.addColorStop(0.78, 'rgba(0,100,60,0.92)');
+  ballGrad.addColorStop(1,    'rgba(0,18,10,1)');
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.fillStyle = ballGrad; ctx.fill();
+
+  // Thin glass rim stroke
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(0,${220 + timelessFlash * 35},${150 + timelessFlash * 60},${0.70 + timelessFlash * 0.30})`;
+  ctx.lineWidth = 1.5 + timelessFlash * 0.8; ctx.stroke();
+
+  // Secondary smaller specular dot — makes it look truly glass
+  ctx.beginPath();
+  ctx.arc(ball.x + ballRadius * 0.22, ball.y + ballRadius * 0.28, ballRadius * 0.12, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(200,255,235,0.35)'; ctx.fill();
+  ctx.restore();
+
+  // Ambient surface arcs off the ball
+  if (Math.random() < 0.25 + timelessFlash * 0.45) {
+    const arcA = Math.random() * Math.PI * 2;
+    const bx = ball.x + Math.cos(arcA) * ballRadius;
+    const by = ball.y + Math.sin(arcA) * ballRadius;
+    const ex = bx + Math.cos(arcA + (Math.random() - 0.5) * 2.0) * (8 + Math.random() * 24);
+    const ey = by + Math.sin(arcA + (Math.random() - 0.5) * 2.0) * (8 + Math.random() * 24);
+    drawLightningBolt(bx, by, ex, ey, 4, 5, 0.45 + timelessFlash * 0.3, 1.0,
+      'rgba(140,255,200,1)');
+  }
+
+  drawMirrorBall(155); handleMirror(cx, cy);
+  ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
+
+  const bounced = handleBounce(cx, cy);
+  if (bounced) {
+    spawnTimelessParticles(ball.x, ball.y, 30);
+    timelessFlash = 1.0;
+
+    // Time-stop screen tint — pale emerald flash
+    ctx.save();
+    ctx.globalAlpha = 0.07 + Math.random() * 0.05;
+    ctx.fillStyle = 'rgba(0,200,120,1)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+
+    // Radial glass shockwave ring
+    const shockGrad = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, effectiveCircleRadius * 0.45);
+    shockGrad.addColorStop(0, 'rgba(0,255,160,0.20)');
+    shockGrad.addColorStop(0.6, 'rgba(0,180,100,0.08)');
+    shockGrad.addColorStop(1, 'rgba(0,60,30,0)');
+    ctx.save(); ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, effectiveCircleRadius * 0.45, 0, Math.PI * 2);
+    ctx.fillStyle = shockGrad; ctx.fill(); ctx.restore();
+
+    app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 110);
   }
 }
