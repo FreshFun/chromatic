@@ -116,6 +116,14 @@ const TRAILS = [
     previewBg: 'radial-gradient(circle,#ffffff80,#aaddff80)',
     previewBorder: 'rgba(255,255,255,0.8)',
     previewDot: '#ffffff'
+  },
+  {
+    id: 'quantum',
+    name: 'Quantum',
+    desc: 'Cobalt blue voltage, Electric',
+    previewBg: 'radial-gradient(circle,#00eeff60,#0033aa80,#000d2280)',
+    previewBorder: 'rgba(0,220,255,0.9)',
+    previewDot: '#00eeff'
   }
 ];
 
@@ -132,6 +140,17 @@ function renderShop() {
     const item = document.createElement('div');
     item.className = 'shop-item' + (isEquipped ? ' equipped' : '');
 
+    // Special quantum glow border
+    if (trail.id === 'quantum') {
+      item.style.borderColor = isEquipped ? 'rgba(0,220,255,0.8)' : 'rgba(0,180,255,0.45)';
+      item.style.background = isEquipped
+        ? 'rgba(0,30,80,0.55)'
+        : 'rgba(0,15,50,0.40)';
+      item.style.boxShadow = isEquipped
+        ? '0 0 18px rgba(0,200,255,0.25), inset 0 0 12px rgba(0,100,200,0.1)'
+        : '0 0 8px rgba(0,180,255,0.12)';
+    }
+
     const preview = document.createElement('div');
     preview.className = 'shop-item-preview';
     preview.style.background = trail.previewBg;
@@ -143,7 +162,7 @@ function renderShop() {
     const info = document.createElement('div');
     info.className = 'shop-item-info';
     info.innerHTML = `
-      <div class="shop-item-name">${trail.name}</div>
+      <div class="shop-item-name" style="${trail.id === 'quantum' ? 'color:#00eeff;text-shadow:0 0 10px rgba(0,220,255,0.6);' : ''}">${trail.name}</div>
       <div class="shop-item-desc">${trail.desc}</div>
     `;
 
@@ -151,9 +170,18 @@ function renderShop() {
     if (isEquipped) {
       btn.textContent = 'Equipped';
       btn.className = 'shop-item-btn equipped-btn';
+      if (trail.id === 'quantum') {
+        btn.style.borderColor = 'rgba(0,220,255,0.5)';
+        btn.style.color = 'rgba(0,220,255,0.6)';
+      }
     } else {
       btn.textContent = 'Equip';
       btn.className = 'shop-item-btn equip-btn';
+      if (trail.id === 'quantum') {
+        btn.style.borderColor = 'rgba(0,220,255,0.7)';
+        btn.style.background = 'rgba(0,80,180,0.3)';
+        btn.style.color = '#00eeff';
+      }
       btn.addEventListener('click', () => {
         playClickSfx();
         equippedTrail = trail.id;
@@ -218,15 +246,16 @@ function playClickSfx() {
 function playBounceSfx(speed, trailId) {
   if (!sfxEnabled) return;
   switch(trailId) {
-    case 'original':  playBounceOriginalSfx(speed);  break;
-    case 'sparky':    playBounceSparkySfx(speed);    break;
-    case 'chromatic': playBounceChromaticSfx(speed); break;
-    case 'hyper':     playBounceHyperSfx(speed);     break;
-    case 'nova':      playBounceNovaSfx(speed);      break;
-    case 'radiant':   playBounceRadiantSfx(speed);   break;
-    case 'prismatic': playBouncePrismaticSfx(speed); break;
+    case 'original':     playBounceOriginalSfx(speed);     break;
+    case 'sparky':       playBounceSparkySfx(speed);       break;
+    case 'chromatic':    playBounceChromaticSfx(speed);    break;
+    case 'hyper':        playBounceHyperSfx(speed);        break;
+    case 'nova':         playBounceNovaSfx(speed);         break;
+    case 'radiant':      playBounceRadiantSfx(speed);      break;
+    case 'prismatic':    playBouncePrismaticSfx(speed);    break;
     case 'illumination': playBounceIlluminationSfx(speed); break;
-    default:          playBounceSandboxSfx(speed);   break;
+    case 'quantum':      playBounceQuantumSfx(speed);      break;
+    default:             playBounceSandboxSfx(speed);      break;
   }
 }
 function playBounceSandboxSfx(speed) {
@@ -388,6 +417,76 @@ function playBounceIlluminationSfx(speed) {
   bg.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
   breath.connect(bg); bg.connect(audioCtx.destination);
   breath.start(); breath.stop(t + 0.7);
+}
+
+// ── QUANTUM SFX ── raw voltage discharge ─────────────────
+function playBounceQuantumSfx(speed) {
+  const t = audioCtx.currentTime;
+  const baseFreq = Math.min(2400, 600 + speed * 55);
+
+  // 1. Massive electric CRACK — white-noise burst via sawtooth + distortion simulation
+  const crack = audioCtx.createOscillator(), cg = audioCtx.createGain();
+  crack.type = 'sawtooth';
+  crack.frequency.setValueAtTime(baseFreq * 3.2, t);
+  crack.frequency.exponentialRampToValueAtTime(80, t + 0.04);
+  cg.gain.setValueAtTime(0.45, t);
+  cg.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+  crack.connect(cg); cg.connect(audioCtx.destination);
+  crack.start(t); crack.stop(t + 0.06);
+
+  // 2. High-voltage arc — rapidly oscillating square that tears through freq range
+  const arc = audioCtx.createOscillator(), ag = audioCtx.createGain();
+  arc.type = 'square';
+  arc.frequency.setValueAtTime(baseFreq * 2, t + 0.01);
+  arc.frequency.exponentialRampToValueAtTime(baseFreq * 0.08, t + 0.22);
+  ag.gain.setValueAtTime(0.30, t + 0.01);
+  ag.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+  arc.connect(ag); ag.connect(audioCtx.destination);
+  arc.start(t + 0.01); arc.stop(t + 0.25);
+
+  // 3. Deep cobalt THUMP — sub rumble for weight
+  const sub = audioCtx.createOscillator(), sg = audioCtx.createGain();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(90, t);
+  sub.frequency.exponentialRampToValueAtTime(28, t + 0.18);
+  sg.gain.setValueAtTime(0.40, t);
+  sg.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  sub.connect(sg); sg.connect(audioCtx.destination);
+  sub.start(t); sub.stop(t + 0.22);
+
+  // 4. Cyan resonance ring — pure sine shimmer that lingers
+  const ring = audioCtx.createOscillator(), rg = audioCtx.createGain();
+  ring.type = 'sine';
+  ring.frequency.setValueAtTime(baseFreq * 0.75, t + 0.03);
+  ring.frequency.linearRampToValueAtTime(baseFreq * 1.1, t + 0.09);
+  ring.frequency.linearRampToValueAtTime(baseFreq * 0.3, t + 0.35);
+  rg.gain.setValueAtTime(0.18, t + 0.03);
+  rg.gain.exponentialRampToValueAtTime(0.001, t + 0.40);
+  ring.connect(rg); rg.connect(audioCtx.destination);
+  ring.start(t + 0.03); ring.stop(t + 0.42);
+
+  // 5. Stutter crackle — 3 rapid micro-bursts simulating arc flicker
+  for (let i = 0; i < 3; i++) {
+    const delay = 0.06 + i * 0.04;
+    const st = audioCtx.createOscillator(), stg = audioCtx.createGain();
+    st.type = 'sawtooth';
+    st.frequency.setValueAtTime(baseFreq * (1.8 - i * 0.4), t + delay);
+    st.frequency.exponentialRampToValueAtTime(200, t + delay + 0.025);
+    stg.gain.setValueAtTime(0.18 - i * 0.04, t + delay);
+    stg.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.03);
+    st.connect(stg); stg.connect(audioCtx.destination);
+    st.start(t + delay); st.stop(t + delay + 0.035);
+  }
+
+  // 6. Tail hiss — high-freq white-ish noise dying away
+  const hiss = audioCtx.createOscillator(), hg = audioCtx.createGain();
+  hiss.type = 'sawtooth';
+  hiss.frequency.setValueAtTime(3800 + speed * 60, t + 0.04);
+  hiss.frequency.linearRampToValueAtTime(1200, t + 0.28);
+  hg.gain.setValueAtTime(0.12, t + 0.04);
+  hg.gain.exponentialRampToValueAtTime(0.001, t + 0.30);
+  hiss.connect(hg); hg.connect(audioCtx.destination);
+  hiss.start(t + 0.04); hiss.stop(t + 0.32);
 }
 
 // ── MUSIC ─────────────────────────────────────────────────
@@ -598,14 +697,15 @@ function stopGame() {
 function loop() {
   const w = canvas.width, h = canvas.height, cx = w/2, cy = h/2;
   const t = equippedTrail;
-  if (t === 'original')        loopOriginal(w, h, cx, cy);
-  else if (t === 'sparky')     loopSparky(w, h, cx, cy);
-  else if (t === 'chromatic')  loopChromatic(w, h, cx, cy);
-  else if (t === 'hyper')      loopHyper(w, h, cx, cy);
-  else if (t === 'nova')       loopNova(w, h, cx, cy);
-  else if (t === 'radiant')    loopRadiant(w, h, cx, cy);
-  else if (t === 'prismatic')  loopPrismatic(w, h, cx, cy);
+  if (t === 'original')          loopOriginal(w, h, cx, cy);
+  else if (t === 'sparky')       loopSparky(w, h, cx, cy);
+  else if (t === 'chromatic')    loopChromatic(w, h, cx, cy);
+  else if (t === 'hyper')        loopHyper(w, h, cx, cy);
+  else if (t === 'nova')         loopNova(w, h, cx, cy);
+  else if (t === 'radiant')      loopRadiant(w, h, cx, cy);
+  else if (t === 'prismatic')    loopPrismatic(w, h, cx, cy);
   else if (t === 'illumination') loopIllumination(w, h, cx, cy);
+  else if (t === 'quantum')      loopQuantum(w, h, cx, cy);
   else                           loopSandbox(w, h, cx, cy);
   animId = requestAnimationFrame(loop);
 }
@@ -965,7 +1065,7 @@ function loopPrismatic(w, h, cx, cy) {
   }
   ctx.save();
   ctx.shadowColor = `hsl(${prismaticHue},100%,65%)`; ctx.shadowBlur = 10 + novaPulse * 20;
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2);
   ctx.strokeStyle = `hsl(${prismaticHue},90%,65%)`; ctx.lineWidth = 2.5 + novaPulse * 2; ctx.stroke();
   ctx.restore();
   novaPulse = Math.max(0, novaPulse - 0.035);
@@ -978,9 +1078,9 @@ function loopPrismatic(w, h, cx, cy) {
   ballGrad.addColorStop(0, `hsl(${bHue1},100%,92%)`);
   ballGrad.addColorStop(0.4, `hsl(${bHue2},100%,70%)`);
   ballGrad.addColorStop(1, `hsl(${bHue3},100%,55%)`);
-  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = ballGrad; ctx.fill();
-  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius + 3, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius + 3, 0, Math.PI*2);
   ctx.strokeStyle = `hsla(${bHue2},100%,80%,0.5)`; ctx.lineWidth = 2; ctx.stroke();
   ctx.restore();
   drawMirrorBall(prismaticHue); handleMirror(cx, cy);
@@ -1042,7 +1142,7 @@ function loopIllumination(w, h, cx, cy) {
   ctx.save();
   ctx.shadowColor = 'rgba(255,255,255,0.9)';
   ctx.shadowBlur = 14 + novaPulse * 28;
-  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI*2);
   ctx.strokeStyle = `rgba(220,240,255,${0.4 + novaPulse * 0.4})`;
   ctx.lineWidth = 2 + novaPulse * 3; ctx.stroke(); ctx.restore();
   novaPulse = Math.max(0, novaPulse - 0.035);
@@ -1056,9 +1156,9 @@ function loopIllumination(w, h, cx, cy) {
   ballGrad.addColorStop(0, 'rgba(255,255,255,1)');
   ballGrad.addColorStop(0.4, 'rgba(210,235,255,0.95)');
   ballGrad.addColorStop(1, 'rgba(180,215,255,0.7)');
-  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI*2);
   ctx.fillStyle = ballGrad; ctx.fill();
-  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius + 4, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius + 4, 0, Math.PI*2);
   ctx.strokeStyle = `rgba(255,255,255,${0.3 + Math.sin(Date.now() * 0.004) * 0.15})`;
   ctx.lineWidth = 2; ctx.stroke();
   ctx.restore();
@@ -1079,6 +1179,251 @@ function loopIllumination(w, h, cx, cy) {
       });
     }
     novaPulse = 1.0;
+    app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 120);
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════
+// ── QUANTUM TRAIL ─────────────────────────────────────────
+// Dark cobalt core · cyan-white electric arcs · volt discharge
+// ══════════════════════════════════════════════════════════
+
+// Lightning bolt helper — draws a jagged arc between two points
+function drawLightningBolt(x1, y1, x2, y2, segments, spread, alpha, lineW, colorStr) {
+  const pts = [[x1, y1]];
+  for (let i = 1; i < segments; i++) {
+    const t = i / segments;
+    const mx = x1 + (x2 - x1) * t + (Math.random() - 0.5) * spread;
+    const my = y1 + (y2 - y1) * t + (Math.random() - 0.5) * spread;
+    pts.push([mx, my]);
+  }
+  pts.push([x2, y2]);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = colorStr;
+  ctx.lineWidth = lineW;
+  ctx.shadowColor = colorStr;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Spawn quantum arc particles — sparks that shoot out from ball
+function spawnQuantumParticles(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i + (Math.random() - 0.5) * 0.6;
+    const spd = 2.5 + Math.random() * 6.5;
+    const isCyan = Math.random() > 0.35;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * spd,
+      vy: Math.sin(angle) * spd,
+      hue: isCyan ? 185 + Math.random() * 20 : 210 + Math.random() * 30,
+      life: 1.0,
+      r: 1 + Math.random() * 2.8,
+      type: 'quantum',
+      isArc: Math.random() > 0.6,    // some particles become secondary arcs
+      arcLen: 15 + Math.random() * 30
+    });
+  }
+}
+
+// Ambient electric motes orbiting the ball
+function spawnQuantumMote() {
+  const angle = Math.random() * Math.PI * 2;
+  const r = ballRadius * (1.1 + Math.random() * 2.2);
+  particles.push({
+    x: ball.x + Math.cos(angle) * r,
+    y: ball.y + Math.sin(angle) * r,
+    vx: (Math.random() - 0.5) * 0.9,
+    vy: -(0.1 + Math.random() * 0.6),
+    hue: Math.random() > 0.5 ? 190 : 220,
+    life: 0.5 + Math.random() * 0.5,
+    r: 0.8 + Math.random() * 1.8,
+    type: 'quantum_mote'
+  });
+}
+
+let quantumFlash = 0; // post-bounce flash intensity
+
+function loopQuantum(w, h, cx, cy) {
+  // Near-opaque background keeps the canvas dark cobalt
+  ctx.fillStyle = 'rgba(0,4,18,0.32)';
+  ctx.fillRect(0, 0, w, h);
+
+  const now = Date.now();
+
+  // ── 1. Ambient electric motes ──
+  if (Math.random() < 0.70) spawnQuantumMote();
+
+  // ── 2. Update & draw all particles ──
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.95; p.vy *= 0.95;
+    p.life -= p.type === 'quantum_mote' ? 0.020 : 0.022;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+
+    if (p.type === 'quantum_mote') {
+      // Tiny floating spark
+      ctx.save();
+      ctx.shadowColor = `hsla(${p.hue},100%,75%,${p.life})`;
+      ctx.shadowBlur = 8 * p.life;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${p.hue},100%,85%,${p.life * 0.85})`;
+      ctx.fill(); ctx.restore();
+    } else if (p.isArc && p.life > 0.3) {
+      // Secondary micro-bolt from this particle
+      const ex = p.x + (Math.random() - 0.5) * p.arcLen;
+      const ey = p.y + (Math.random() - 0.5) * p.arcLen;
+      drawLightningBolt(p.x, p.y, ex, ey, 4, 6, p.life * 0.6, 0.8,
+        `hsla(${p.hue},100%,88%,1)`);
+    } else {
+      // Regular arc spark
+      ctx.save();
+      ctx.shadowColor = `hsla(${p.hue},100%,80%,1)`;
+      ctx.shadowBlur = 12 * p.life;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${p.hue},100%,88%,${p.life})`;
+      ctx.fill(); ctx.restore();
+    }
+  }
+
+  // ── 3. Electric trail ──
+  trail.push({ x: ball.x, y: ball.y, r: ballRadius, t: now });
+  if (trail.length > 90) trail.shift();
+  for (let i = 0; i < trail.length; i++) {
+    const pt = trail[i], alpha = i / trail.length;
+    const size = Math.max(1, pt.r * alpha * 0.55);
+    // Core trail dot — cobalt blue fading to cyan at the head
+    const trailHue = 200 + alpha * 15; // 200 cobalt → 215 cyan
+    ctx.save();
+    ctx.shadowColor = `hsla(${trailHue},100%,65%,${alpha})`;
+    ctx.shadowBlur = 10 * alpha;
+    const tg = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, size);
+    tg.addColorStop(0, `hsla(180,100%,92%,${alpha * 0.9})`);
+    tg.addColorStop(0.5, `hsla(${trailHue},100%,65%,${alpha * 0.65})`);
+    tg.addColorStop(1, `hsla(220,100%,45%,0)`);
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, size, 0, Math.PI * 2);
+    ctx.fillStyle = tg; ctx.fill();
+    ctx.restore();
+
+    // Occasional micro-jag between trail dots
+    if (i > 0 && Math.random() < 0.14 * alpha) {
+      const prev = trail[i - 1];
+      drawLightningBolt(prev.x, prev.y, pt.x, pt.y, 3, 8, alpha * 0.5, 0.7,
+        `hsla(190,100%,80%,1)`);
+    }
+  }
+
+  // ── 4. Containment circle — pulsing electric ring ──
+  quantumFlash = Math.max(0, quantumFlash - 0.04);
+  const ringPulse = 0.5 + Math.sin(now * 0.003) * 0.5;
+  const ringBlur = 8 + quantumFlash * 28 + ringPulse * 4;
+  ctx.save();
+  ctx.shadowColor = `rgba(0,220,255,${0.5 + quantumFlash * 0.5})`;
+  ctx.shadowBlur = ringBlur;
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(0,${180 + quantumFlash * 75},255,${0.45 + quantumFlash * 0.5})`;
+  ctx.lineWidth = 2 + quantumFlash * 3.5; ctx.stroke();
+  ctx.restore();
+
+  // Secondary faint outer ring
+  ctx.save();
+  ctx.globalAlpha = 0.12 + quantumFlash * 0.18;
+  ctx.shadowColor = '#00eeff';
+  ctx.shadowBlur = 20;
+  ctx.beginPath(); ctx.arc(cx, cy, effectiveCircleRadius + 4, 0, Math.PI * 2);
+  ctx.strokeStyle = '#00eeff'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.restore();
+
+  // Random arc flickers along the ring boundary
+  if (Math.random() < 0.22 + quantumFlash * 0.4) {
+    const a1 = Math.random() * Math.PI * 2;
+    const a2 = a1 + (Math.random() - 0.5) * 0.7;
+    const x1 = cx + Math.cos(a1) * effectiveCircleRadius;
+    const y1 = cy + Math.sin(a1) * effectiveCircleRadius;
+    const x2 = cx + Math.cos(a2) * effectiveCircleRadius;
+    const y2 = cy + Math.sin(a2) * effectiveCircleRadius;
+    drawLightningBolt(x1, y1, x2, y2, 5, 12, 0.35 + quantumFlash * 0.4, 1.0,
+      'rgba(0,240,255,1)');
+  }
+
+  // ── 5. Ball — dark cobalt orb with cyan-white corona ──
+  const ballPulse = Math.sin(now * 0.005) * 0.5 + 0.5;
+  ctx.save();
+  ctx.shadowColor = `rgba(0,220,255,${0.8 + quantumFlash * 0.2})`;
+  ctx.shadowBlur = 22 + quantumFlash * 20 + ballPulse * 6;
+
+  // Outer corona
+  const coronaGrad = ctx.createRadialGradient(ball.x, ball.y, ballRadius * 0.7, ball.x, ball.y, ballRadius * 2.0);
+  coronaGrad.addColorStop(0, `rgba(0,200,255,${0.18 + quantumFlash * 0.15})`);
+  coronaGrad.addColorStop(1, 'rgba(0,40,120,0)');
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius * 2.0, 0, Math.PI * 2);
+  ctx.fillStyle = coronaGrad; ctx.fill();
+
+  // Core ball gradient — deep cobalt with bright cyan-white cap
+  const ballGrad = ctx.createRadialGradient(
+    ball.x - ballRadius * 0.3, ball.y - ballRadius * 0.35, 0,
+    ball.x, ball.y, ballRadius
+  );
+  ballGrad.addColorStop(0, 'rgba(220,248,255,1)');       // white-cyan specular
+  ballGrad.addColorStop(0.25, 'rgba(0,210,255,0.95)');   // pure cyan
+  ballGrad.addColorStop(0.6, 'rgba(0,80,200,0.9)');      // cobalt mid
+  ballGrad.addColorStop(1, 'rgba(0,10,60,1)');           // near-black edge
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.fillStyle = ballGrad; ctx.fill();
+
+  // Electric rim
+  ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(0,${200 + quantumFlash * 55},255,${0.75 + quantumFlash * 0.25})`;
+  ctx.lineWidth = 1.8 + quantumFlash; ctx.stroke();
+  ctx.restore();
+
+  // Arc bolts radiating from ball surface on ambient tick
+  if (Math.random() < 0.30 + quantumFlash * 0.5) {
+    const arcAngle = Math.random() * Math.PI * 2;
+    const bx = ball.x + Math.cos(arcAngle) * ballRadius;
+    const by = ball.y + Math.sin(arcAngle) * ballRadius;
+    const ex = bx + Math.cos(arcAngle + (Math.random() - 0.5) * 1.5) * (10 + Math.random() * 28);
+    const ey = by + Math.sin(arcAngle + (Math.random() - 0.5) * 1.5) * (10 + Math.random() * 28);
+    drawLightningBolt(bx, by, ex, ey, 5, 7, 0.55 + quantumFlash * 0.3, 1.2,
+      'rgba(180,240,255,1)');
+  }
+
+  drawMirrorBall(190); handleMirror(cx, cy);
+  ball.vy += GRAVITY; ball.x += ball.vx; ball.y += ball.vy;
+
+  const bounced = handleBounce(cx, cy);
+  if (bounced) {
+    spawnQuantumParticles(ball.x, ball.y, 28);
+    quantumFlash = 1.0;
+    // Full-canvas electric flash
+    ctx.save();
+    ctx.globalAlpha = 0.08 + Math.random() * 0.06;
+    ctx.fillStyle = 'rgba(0,180,255,1)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+    // Radial shock burst from impact point
+    const shockGrad = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, effectiveCircleRadius * 0.4);
+    shockGrad.addColorStop(0, 'rgba(0,220,255,0.22)');
+    shockGrad.addColorStop(1, 'rgba(0,40,120,0)');
+    ctx.save(); ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.arc(ball.x, ball.y, effectiveCircleRadius * 0.4, 0, Math.PI * 2);
+    ctx.fillStyle = shockGrad; ctx.fill(); ctx.restore();
+    // 3 main bolt arcs from impact point toward ring
+    for (let b = 0; b < 3; b++) {
+      const ba = Math.random() * Math.PI * 2;
+      const bex = cx + Math.cos(ba) * effectiveCircleRadius;
+      const bey = cy + Math.sin(ba) * effectiveCircleRadius;
+      drawLightningBolt(ball.x, ball.y, bex, bey, 8, 18, 0.7, 1.5,
+        'rgba(160,236,255,1)');
+    }
     app.classList.add('shake'); setTimeout(() => app.classList.remove('shake'), 120);
   }
 }
