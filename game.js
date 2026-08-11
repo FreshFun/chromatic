@@ -116,16 +116,41 @@ async function loadAssets() {
 
   for (const [key, path] of entries) {
     loadText.textContent = `Loading ${key}…`;
+
+    // Probe first, so a failure can say what actually went wrong. FBXLoader
+    // reports every failure identically, which hides the difference between
+    // a missing file, a wrong path and a blocked request.
+    let status = null;
+    try {
+      const probe = await fetch(path, { method: 'HEAD' });
+      status = probe.status;
+    } catch {
+      status = 'network';
+    }
+
+    if (status === 404) {
+      throw new Error(
+        `404 — ${path} is not on the server.\n\n` +
+        `Check that the assets folder was uploaded, and that the filename ` +
+        `matches exactly. Hosting is case-sensitive even when your computer ` +
+        `isn't: Snaptic_Model.fbx and snaptic_model.fbx are different files.`
+      );
+    }
+
+    if (status === 'network') {
+      throw new Error(
+        `Could not reach ${path}.\n\n` +
+        `If you opened this file directly from your computer, serve the ` +
+        `folder instead:\n\n    python3 -m http.server 8000\n\n` +
+        `then visit http://localhost:8000`
+      );
+    }
+
     let obj;
     try {
       obj = await loader.loadAsync(path);
     } catch (e) {
-      throw new Error(
-        `Could not load ${path}\n\n` +
-        `Open this through a local server, not by double-clicking the file. ` +
-        `In the ANON folder run:\n\n    python3 -m http.server 8000\n\n` +
-        `then visit http://localhost:8000`
-      );
+      throw new Error(`${path} loaded (HTTP ${status}) but could not be parsed as FBX.`);
     }
 
     if (key === 'character') {
