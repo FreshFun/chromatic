@@ -9,10 +9,16 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { MODELS, toBuffer } from './assets.js';
 
-/* Printed on load so it's obvious in the console whether the browser is
-   running current code or a cached copy. */
-const BUILD = 'v9 rootfix';
+/* Printed on load and shown on the title screen, so it's obvious at a glance
+   whether the browser is running current code or a cached copy. */
+const BUILD = 'v10 hipyaw';
 console.log('ANON build:', BUILD);
+
+/* The hip bone genuinely should rotate through a run — that motion is a lot
+   of what makes the stride read as weight. Removing its yaw stops the body
+   swinging left and right, but if the run ends up looking stiff, this is the
+   switch to turn back off. */
+const STRIP_HIP_YAW = true;
 
 /* --------------------------------------------------------------------------
    Tuning
@@ -206,60 +212,40 @@ async function loadAssets() {
  * lean and weight-shift that make the run look alive are preserved — this
  * removes the whole-body swivel, not the performance.
  */
+/* Scratch objects for the quaternion surgery below. Allocating inside the
+   per-keyframe loop would create thousands of throwaway objects per clip. */
+const _q = new THREE.Quaternion();
+const _e = new THREE.Euler();
+
 function lockRootMotion(clip) {
-  /* Identifying the bone that carries the travel is the whole problem here.
-     Freezing the right one stops the body swivelling as it runs; freezing the
-     wrong one nails a limb into its rest pose, which is why an earlier attempt
-     left the character starfishing mid-jump.
+  /* Two different problems, two different treatments.
 
-     Name comes first, because it's unambiguous when it matches. Travel is only
-     a fallback, and only when a bone genuinely moves — in a vertical jump
-     nothing travels horizontally, so picking "the furthest mover" there just
-     returns an arbitrary bone. The blacklist is the last line of defence: no
-     limb should ever be a candidate, whatever the numbers say. */
-  const LIMB = /(arm|leg|hand|foot|toe|head|neck|shoulder|clavicle|finger|thumb|spine|torso|chest)/i;
+     The root bone carries the character's travel across the ground, and that
+     is replaced wholesale by the movement code, so it gets frozen outright.
 
+     The hip bone is subtler. It genuinely should rotate — a run cycle turns
+     the hips through every stride, and that rotation is a lot of what makes
+     the motion read as weight rather than a puppet sliding along. But its
+     yaw stacks on top of the direction the player is steering, and the sum is
+     a character that swings left and right as it runs. So only the yaw is
+     removed; the lean and roll are left alone. Freezing the hip completely
+     would fix the swing and flatten the run at the same time. */
   const boneOf = name => name.split('.')[0].replace(/^\.?bones\[|\]$/g, '');
 
-  let rootBone = null;
+  const LIMB = /(arm|leg|hand|foot|toe|head|neck|shoulder|clavicle|finger|thumb)/i;
+
+  const isRoot = b => {
+    const n = b.toLowerCase();
+    return n === 'root' || n === 'armature';
+  };
+
+  const isHip = b => {
+    const n = b.toLowerCase();
+    return n === 'pelvis' || n === 'hips' || n.endsWith(':hips') || n === 'hip';
+  };
 
   for (const track of clip.tracks) {
-    const bone = boneOf(track.name).toLowerCase();
-    if (bone === 'root' || bone === 'armature' || bone.endsWith(':hips') || bone === 'hips') {
-      rootBone = boneOf(track.name);
-      break;
-    }
-  }
-
-  if (!rootBone) {
-    let best = 0;
-    for (const track of clip.tracks) {
-      if (!track.name.endsWith('.position')) continue;
-
-      const bone = boneOf(track.name);
-      if (LIMB.test(bone)) continue;
-
-      const v = track.values;
-      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-      for (let i = 0; i < v.length; i += 3) {
-        if (v[i]     < minX) minX = v[i];
-        if (v[i]     > maxX) maxX = v[i];
-        if (v[i + 2] < minZ) minZ = v[i + 2];
-        if (v[i + 2] > maxZ) maxZ = v[i + 2];
-      }
-
-      const travel = Math.max(maxX - minX, maxZ - minZ);
-      if (travel > best) { best = travel; rootBone = bone; }
-    }
-
-    // Nothing moved far enough to be the travelling bone. Freeze nothing:
-    // a little residual swivel is much better than a broken pose.
-    if (best < 0.01) rootBone = null;
-  }
-
-  if (rootBone && LIMB.test(rootBone)) rootBone = null;
-
-  for (const track of clip.tracks) {
+    const bone = boneOf(track.name);
     const v = track.values;
 
     if (track.name.endsWith('.position')) {
@@ -269,13 +255,32 @@ function lockRootMotion(clip) {
         v[i] = v[0];
         v[i + 2] = v[2];
       }
-    } else if (rootBone && track.name.endsWith('.quaternion')
-               && boneOf(track.name) === rootBone) {
+      continue;
+    }
+
+    if (!track.name.endsWith('.quaternion') || LIMB.test(bone)) continue;
+
+    if (isRoot(bone)) {
       for (let i = 0; i < v.length; i += 4) {
         v[i]     = v[0];
         v[i + 1] = v[1];
         v[i + 2] = v[2];
         v[i + 3] = v[3];
+      }
+    } else if (isHip(bone) && STRIP_HIP_YAW) {
+      for (let i = 0; i < v.length; i += 4) {
+        _q.set(v[i], v[i + 1], v[i + 2], v[i + 3]);
+
+        // YXZ puts yaw first, so zeroing y removes the turn and leaves the
+        // forward lean and side roll intact.
+        _e.setFromQuaternion(_q, 'YXZ');
+        _e.y = 0;
+        _q.setFromEuler(_e);
+
+        v[i]     = _q.x;
+        v[i + 1] = _q.y;
+        v[i + 2] = _q.z;
+        v[i + 3] = _q.w;
       }
     }
   }
@@ -1088,12 +1093,10 @@ function onHostMessage(conn, msg) {
   } else if (msg.t === 'bye') {
     dropPeer(conn.peer);
   } else if (msg.t === 'probe') {
-    // Someone on the title screen asking who's here. Answer and forget them —
-    // no avatar is created, so browsing a lobby doesn't put you in it.
-    conn.send({
-      t: 'roster',
-      names: [myName, ...[...remotes.values()].map(a => a.name)]
-    });
+    // Someone on the title screen asking how busy this room is. Answer with a
+    // count only — the lobby list has no business publishing who is inside —
+    // and create no avatar, so browsing a lobby never puts you in it.
+    conn.send({ t: 'roster', count: remotes.size + 1 });
   }
 }
 
@@ -1148,21 +1151,21 @@ function probeLobby(p, code) {
     let settled = false;
     const conn = p.connect(peerIdFor(code), { reliable: true });
 
-    const finish = names => {
+    const finish = count => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       try { conn.close(); } catch {}
-      resolve(names);
+      resolve(count);
     };
 
     // No answer means nobody is hosting, which is a valid result rather than
     // an error: the lobby is simply empty until someone walks in.
-    const timer = setTimeout(() => finish([]), 3500);
+    const timer = setTimeout(() => finish(0), 3500);
 
     conn.on('open', () => conn.send({ t: 'probe' }));
-    conn.on('data', msg => { if (msg.t === 'roster') finish(msg.names || []); });
-    conn.on('error', () => finish([]));
+    conn.on('data', msg => { if (msg.t === 'roster') finish(msg.count || 0); });
+    conn.on('error', () => finish(0));
   });
 }
 
@@ -1179,8 +1182,8 @@ async function refreshLobbies() {
   // to different rooms is exactly the pattern that trips broker rate limits.
   for (const lobby of PUBLIC_LOBBIES) {
     if (peer) return;                       // already in a game; stop polling
-    const names = await probeLobby(p, lobby.code);
-    lobbyState.set(lobby.code, { names, checked: true });
+    const count = await probeLobby(p, lobby.code);
+    lobbyState.set(lobby.code, { count, checked: true });
     renderLobbies();
   }
 }
@@ -1191,20 +1194,19 @@ function renderLobbies() {
 
   for (const lobby of PUBLIC_LOBBIES) {
     const state = lobbyState.get(lobby.code);
-    const names = state ? state.names : null;
-    const count = names ? names.length : 0;
+    const count = state ? state.count : 0;
 
     const row = document.createElement('button');
     row.className = 'lobby' + (count > 0 ? ' live' : '');
 
-    let who;
-    if (!state) who = 'checking…';
-    else if (count === 0) who = 'empty — be the first';
-    else who = names.join(', ');
+    let status;
+    if (!state) status = 'checking…';
+    else if (count === 0) status = 'empty — be the first';
+    else status = count === 1 ? '1 player' : `${count} players`;
 
     row.innerHTML =
       `<span class="name">${escapeHtml(lobby.name)}</span>` +
-      `<span class="who">${escapeHtml(who)}</span>` +
+      `<span class="who">${escapeHtml(status)}</span>` +
       `<span class="count">${state ? count : '·'}</span>`;
 
     row.addEventListener('click', () => enterGame('public', lobby.code));
@@ -1407,9 +1409,9 @@ function stripType(s) {
 
 function renderRoster() {
   if (!peer) return;
-  const names = [`<div class="me">${escapeHtml(myName)} (you)</div>`];
-  for (const a of remotes.values()) names.push(`<div>${escapeHtml(a.name)}</div>`);
-  rosterEl.innerHTML = `<div class="head">PLAYERS</div>${names.join('')}`;
+  const n = remotes.size + 1;
+  rosterEl.innerHTML =
+    `<div class="head">PLAYERS</div><div class="tally">${n}</div>`;
   rosterEl.classList.remove('hidden');
 }
 
@@ -1503,6 +1505,8 @@ async function enterGame(mode, code) {
 
 el('btn-solo').addEventListener('click', () => enterGame('solo'));
 el('btn-host').addEventListener('click', () => enterGame('host', makeCode()));
+
+el('buildtag').textContent = 'build ' + BUILD;
 
 // Start browsing as soon as the title screen is up, so the lobby list is
 // already populated by the time someone has finished typing a name.

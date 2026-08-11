@@ -41,6 +41,7 @@
     </div>
 
     <p id="title-status" class="status"></p>
+    <p id="buildtag" class="buildtag"></p>
   </div>
 </div>
 
@@ -59,6 +60,7 @@
   <span class="label">ROOM</span>
   <span id="roomcode">—</span>
   <button id="btn-copy" title="Copy code">copy</button>
+  <button id="btn-leave" title="Leave">leave</button>
 </div>
 
 <div id="roster" class="hidden"></div>
@@ -67,7 +69,15 @@
   <b>WASD</b> move · <b>Space</b> jump · <b>Mouse</b> look · <b>Esc</b> release cursor
 </div>
 
-<div id="click" class="hidden">Click to play</div>
+<div id="click" class="hidden">
+  <div class="pause-inner">
+    <p id="pause-title">Click to play</p>
+    <div class="pause-actions">
+      <button id="btn-resume" class="primary">Resume</button>
+      <button id="btn-quit" class="ghost">Leave</button>
+    </div>
+  </div>
+</div>
 
 <!-- Touch controls. The stick is positioned wherever the thumb lands rather
      than pinned to a fixed spot, so it works for any hand size or grip. -->

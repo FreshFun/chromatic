@@ -271,6 +271,13 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
 
 #roster .me { color: var(--signal); }
 
+#roster .tally {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+}
+
 #hud {
   position: fixed;
   left: 14px;
@@ -302,13 +309,37 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
   display: flex;
   align-items: center;
   justify-content: center;
+  background: rgba(8, 9, 11, .72);
+  cursor: pointer;
+}
+
+.pause-inner {
+  text-align: center;
+  cursor: default;
+}
+
+#pause-title {
+  margin: 0 0 20px;
   font-size: 12px;
   letter-spacing: .16em;
   text-transform: uppercase;
   color: var(--text);
-  background: rgba(8, 9, 11, .55);
-  cursor: pointer;
 }
+
+.pause-actions {
+  display: flex;
+  gap: 9px;
+  justify-content: center;
+}
+
+.pause-actions button { min-width: 116px; }
+
+#btn-leave {
+  color: var(--error);
+  border-color: transparent;
+}
+
+#btn-leave:hover { border-color: var(--error); }
 
 /* ------------------------------------------------------- floating name tag */
 
@@ -351,6 +382,14 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
   border-bottom: 1px solid rgba(255, 255, 255, .13);
   transform: rotate(45deg);
   border-radius: 0 0 2px 0;
+}
+
+.buildtag {
+  margin: 22px 0 0;
+  font-size: 9px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: #3d444e;
 }
 
 /* ---------------------------------------------------- public lobbies */
