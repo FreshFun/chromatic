@@ -14,8 +14,15 @@ import { MODELS, toBuffer } from './assets.js';
    -------------------------------------------------------------------------- */
 
 const RUN_SPEED  = 6.4;
-const TURN_SPEED = 12;
+const TURN_SPEED = 7;
 const ACCEL      = 13;
+
+/* A thumb resting on a stick is never perfectly still, and the direction it
+   reports changes a little every frame. Steering straight from that makes the
+   character yaw back and forth as it runs. The heading is smoothed instead,
+   and only updated once the input is pushed past a clear threshold. */
+const HEADING_SMOOTH = 9;
+const STEER_DEADZONE = 0.22;
 
 /* The run clip was authored for a slower ground speed than the game now uses,
    so its playback rate scales with how fast the character is actually moving.
@@ -106,6 +113,7 @@ let yawTarget = 0, pitchTarget = 0.26;
 let yaw = 0, pitch = 0.26;
 let pointerLocked = false;
 let spaceWasDown = false;
+let headingTarget = 0;   // smoothed steering direction, in radians
 
 /* Touch input. The stick reports an analog vector rather than a boolean, so
    a half-pushed thumb gives a slower run and the idle/run blend follows it
@@ -180,18 +188,44 @@ async function loadAssets() {
 }
 
 /**
- * Mixamo bakes forward travel into the root bone's position track, so a run
- * clip physically walks the model away from the origin. The script drives
- * movement instead, so freeze horizontal motion and keep vertical, which is
- * what gives a jump its arc.
+ * Neutralises the clip's root motion.
+ *
+ * Mixamo bakes a character's travel into the root bone, so a run clip both
+ * walks the model away from the origin and swings it side to side as the hips
+ * rotate through each stride. The script drives position and facing itself, so
+ * both have to be flattened here or they fight: the visible symptom is a
+ * character that yaws back and forth while running, as the clip's rotation
+ * adds to the direction the player is steering.
+ *
+ * Only the root is touched. Every other bone keeps its full animation, so the
+ * lean and weight-shift that make the run look alive are preserved — this
+ * removes the whole-body swivel, not the performance.
  */
 function lockRootMotion(clip) {
+  const isRoot = name => {
+    const bone = name.split('.')[0].replace(/^\.?bones\[|\]$/g, '').toLowerCase();
+    return bone === 'root' || bone === 'armature';
+  };
+
   for (const track of clip.tracks) {
-    if (!track.name.endsWith('.position')) continue;
     const v = track.values;
-    for (let i = 0; i < v.length; i += 3) {
-      v[i] = v[0];
-      v[i + 2] = v[2];
+
+    if (track.name.endsWith('.position')) {
+      // Applied to every bone. Only the root actually travels, so this is a
+      // no-op elsewhere, and it doesn't depend on guessing the root's name.
+      for (let i = 0; i < v.length; i += 3) {
+        v[i] = v[0];
+        v[i + 2] = v[2];
+      }
+    } else if (track.name.endsWith('.quaternion') && isRoot(track.name)) {
+      // Rotation is name-matched, because flattening it on every bone would
+      // freeze the entire performance into a T-pose.
+      for (let i = 0; i < v.length; i += 4) {
+        v[i]     = v[0];
+        v[i + 1] = v[1];
+        v[i + 2] = v[2];
+        v[i + 3] = v[3];
+      }
     }
   }
   return clip;
@@ -546,10 +580,20 @@ function stepLocal(dt) {
   local.speed += (target - local.speed) * Math.min(1, dt * ACCEL);
   local.group.position.addScaledVector(move, local.speed * dt);
 
-  // Face the direction of travel, easing rather than snapping.
-  if (moving) {
+  // Face the direction of travel. The target heading is itself smoothed, so
+  // small wobbles in the input never reach the character's facing — only a
+  // sustained push past the deadzone turns it.
+  if (moving && throttle > STEER_DEADZONE) {
     const want = Math.atan2(move.x, move.z);
-    let diff = want - local.group.rotation.y;
+
+    let d = want - headingTarget;
+    while (d >  Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    headingTarget += d * (1 - Math.exp(-HEADING_SMOOTH * dt));
+  }
+
+  if (moving) {
+    let diff = headingTarget - local.group.rotation.y;
     while (diff >  Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
     local.group.rotation.y += diff * Math.min(1, dt * TURN_SPEED);
