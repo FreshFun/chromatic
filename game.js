@@ -40,14 +40,17 @@ const JUMP_FADE_OUT = 7;
    crawl along edges read as a shimmer. */
 const PIXEL_SIZE = 3;
 
-/* Metalness sits well below half. At full metal the surface shows only
-   reflections, which against a modest environment reads as near-black — that
-   was why the character came out a silhouette. Keeping most of the surface
-   non-metallic lets the scene lights actually land on it. */
-const SILVER       = 0xeef2f7;
-const SILVER_METAL = 0.38;
-const SILVER_ROUGH = 0.36;
-const SILVER_ENV   = 1.6;
+/* Silver. Three values do the work together and can't be tuned in isolation.
+   Metalness high enough that the surface is mostly reflection, which is what
+   produces the bright rim and the dark shading between limbs, but not so
+   high that nothing diffuse remains to keep it off black. Roughness low, so
+   highlights stay tight and read as polished rather than chalky. Base colour
+   a mid grey, because a near-white base pushes even a metal surface toward
+   flat matte plastic. */
+const SILVER       = 0x9fa8b2;
+const SILVER_METAL = 0.82;
+const SILVER_ROUGH = 0.22;
+const SILVER_ENV   = 2.0;
 
 const CAM_DISTANCE = 5.6;
 const CAM_HEIGHT   = 1.35;
@@ -195,7 +198,7 @@ function buildScene() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.1;
+  renderer.toneMappingExposure = 0.95;
   document.body.appendChild(renderer.domElement);
 
   // Name tags render as real DOM on a transparent layer above the canvas, so
@@ -218,9 +221,9 @@ function buildScene() {
   camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 500);
   camera.rotation.order = 'YXZ';
 
-  scene.add(new THREE.HemisphereLight(0xe4eefb, 0x7a7466, 1.5));
+  scene.add(new THREE.HemisphereLight(0xe4eefb, 0x7a7466, 1.2));
 
-  sun = new THREE.DirectionalLight(0xfff4e2, 1.9);
+  sun = new THREE.DirectionalLight(0xfff4e2, 2.4);
   sun.position.set(12, 20, 8);
   sun.castShadow = true;
   sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
@@ -229,6 +232,13 @@ function buildScene() {
   sun.shadow.camera.updateProjectionMatrix();
   sun.shadow.bias = -0.0006;
   scene.add(sun, sun.target);
+
+  /* A dim cool light from behind and to the side. On a metal surface this is
+     what draws the bright edge down the shoulders and arms — the detail that
+     separates polished metal from a flat grey shape. */
+  const rim = new THREE.DirectionalLight(0xbcd4f0, 1.1);
+  rim.position.set(-9, 7, -11);
+  scene.add(rim);
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(400, 400),
