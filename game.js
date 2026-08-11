@@ -35,10 +35,10 @@ const JUMP_SPEED     = -GRAVITY * AIR_TIME / 2;
 const JUMP_FADE_IN  = 20;
 const JUMP_FADE_OUT = 7;
 
-/* Look. PIXEL_SIZE 3 rather than 4: the low-resolution grid is fixed to the
-   screen while the world slides beneath it, and coarser blocks make that
-   crawl along edges read as a shimmer. */
-const PIXEL_SIZE = 3;
+/* Look. PIXEL_SIZE 2 rather than 3: the reference keeps a visible grid but
+   the blocks are small enough that curved edges still read as curves. Set to
+   1 for a clean render with no pixelation at all. */
+const PIXEL_SIZE = 2;
 
 /* Silver. Three values do the work together and can't be tuned in isolation.
    Metalness high enough that the surface is mostly reflection, which is what
