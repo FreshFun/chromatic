@@ -13,9 +13,17 @@ import { MODELS, toBuffer } from './assets.js';
    Tuning
    -------------------------------------------------------------------------- */
 
-const RUN_SPEED  = 4.6;
-const TURN_SPEED = 10;
-const ACCEL      = 9;
+const RUN_SPEED  = 6.4;
+const TURN_SPEED = 12;
+const ACCEL      = 13;
+
+/* The run clip was authored for a slower ground speed than the game now uses,
+   so its playback rate scales with how fast the character is actually moving.
+   Without this the feet cycle too slowly for the distance covered and the
+   character looks like it's skating. */
+const RUN_ANIM_RATE = 1.28;
+const RUN_ANIM_MIN  = 0.65;
+const RUN_ANIM_MAX  = 1.5;
 
 /* Jump timing is matched to the animation rather than picked arbitrarily.
    CROUCH_END and LAND_AT are positions inside the raw 1.9s clip; JUMP_RATE
@@ -52,9 +60,9 @@ const SILVER_METAL = 0.82;
 const SILVER_ROUGH = 0.22;
 const SILVER_ENV   = 2.0;
 
-const CAM_DISTANCE = 5.6;
+const CAM_DISTANCE = 6.1;
 const CAM_HEIGHT   = 1.35;
-const CAM_SMOOTH   = 10;    // how quickly the camera follows the character
+const CAM_SMOOTH   = 11;    // how quickly the camera follows the character
 /* Look smoothing is off: the view maps 1:1 to the mouse, with no easing
    between where you point and where the camera ends up. Set LOOK_SMOOTHING
    to true to bring the damping back. */
@@ -426,6 +434,12 @@ class Avatar {
 
     const blend = Math.min(1, this.speed / RUN_SPEED);
     const loco = 1 - this.jumpBlend;
+
+    // Cadence follows real speed, so a half-pushed stick jogs and a full one
+    // sprints, rather than both playing the same stride at different rates
+    // of travel.
+    this.actions.run.timeScale = Math.max(RUN_ANIM_MIN,
+      Math.min(RUN_ANIM_MAX, blend * RUN_ANIM_RATE));
 
     this.actions.idle.setEffectiveWeight((1 - blend) * loco);
     this.actions.run.setEffectiveWeight(blend * loco);
