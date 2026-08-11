@@ -53,8 +53,10 @@ canvas {
 
 .title-inner {
   width: 100%;
-  max-width: 340px;
+  max-width: 380px;
   text-align: center;
+  max-height: 100vh;
+  overflow-y: auto;
 }
 
 .wordmark {
@@ -349,6 +351,75 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
   border-bottom: 1px solid rgba(255, 255, 255, .13);
   transform: rotate(45deg);
   border-radius: 0 0 2px 0;
+}
+
+/* ---------------------------------------------------- public lobbies */
+
+#lobbies {
+  display: grid;
+  gap: 7px;
+  text-align: left;
+}
+
+.lobby {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lobby:hover:not(:disabled) { border-color: var(--signal); }
+
+.lobby .name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text);
+  flex: none;
+}
+
+/* The occupant list is the point of the row, so it gets the space and
+   truncates rather than wrapping the row to two lines. */
+.lobby .who {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lobby .count {
+  flex: none;
+  font-size: 10px;
+  letter-spacing: .1em;
+  color: var(--dim);
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+}
+
+.lobby.live .count {
+  color: #0b0d10;
+  background: var(--signal);
+  border-color: var(--signal);
+}
+
+.lobby-empty {
+  padding: 10px 2px;
+  font-size: 11px;
+  color: var(--dim);
 }
 
 /* ---------------------------------------------------- touch controls */

@@ -802,6 +802,18 @@ function bindTouch() {
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no I/O/0/1 to read aloud
 
+/* Public lobbies are ordinary rooms on fixed, well-known codes. There is no
+   server keeping them alive, so "always up" means: whoever arrives first
+   silently becomes the host, and if that person leaves, the remaining players
+   race to take over. From a player's side a lobby is simply always there. */
+const PUBLIC_LOBBIES = [
+  { code: 'PLAZA', name: 'Plaza' },
+  { code: 'DUNES', name: 'Dunes' },
+  { code: 'VOIDX', name: 'Void'  }
+];
+
+const isPublic = code => PUBLIC_LOBBIES.some(l => l.code === code);
+
 function makeCode() {
   let out = '';
   for (let i = 0; i < 5; i++)
@@ -811,6 +823,33 @@ function makeCode() {
 
 const peerIdFor = code => `anon-room-${code}`;
 
+/**
+ * Joins a room, hosting it if nobody is there yet. Tries to connect as a
+ * client first, because the failure mode that way round is cheap: if no host
+ * answers, we simply become one. Claiming the host ID first would instead
+ * mean two people who arrive simultaneously both think they own the room.
+ */
+async function enterRoom(code, { allowHost }) {
+  try {
+    await startClient(code);
+    return;
+  } catch (e) {
+    if (!allowHost || e.code !== 'no-host') throw e;
+  }
+
+  try {
+    await startHost(code);
+  } catch (e) {
+    // Someone claimed it in the gap between our attempts. Join them instead.
+    if (e.code === 'taken') {
+      await new Promise(r => setTimeout(r, 400));
+      await startClient(code);
+      return;
+    }
+    throw e;
+  }
+}
+
 function startHost(code) {
   return new Promise((resolve, reject) => {
     isHost = true;
@@ -819,11 +858,16 @@ function startHost(code) {
     myId = 'host';
 
     peer.on('open', () => resolve());
-    peer.on('error', err => reject(new Error(
-      err.type === 'unavailable-id'
-        ? 'That room code is already taken. Try creating another.'
-        : `Network error: ${err.type}`
-    )));
+
+    peer.on('error', err => {
+      if (err.type === 'unavailable-id') {
+        const e = new Error('That room code is already taken.');
+        e.code = 'taken';
+        reject(e);
+      } else {
+        reject(new Error(`Network error: ${err.type}`));
+      }
+    });
 
     peer.on('connection', conn => {
       conn.on('open', () => {
@@ -844,16 +888,20 @@ function startClient(code) {
     roomCode = code;
     peer = new Peer();
 
-    const timer = setTimeout(
-      () => reject(new Error('No room found with that code.')), 12000);
+    const fail = (message, kind) => {
+      const e = new Error(message);
+      e.code = kind;
+      reject(e);
+    };
+
+    // Short, because for a public lobby this timeout is the normal path to
+    // discovering the room is empty and we should host it ourselves.
+    const timer = setTimeout(() => fail('No room found with that code.', 'no-host'), 5000);
 
     peer.on('error', err => {
       clearTimeout(timer);
-      reject(new Error(
-        err.type === 'peer-unavailable'
-          ? 'No room found with that code.'
-          : `Network error: ${err.type}`
-      ));
+      if (err.type === 'peer-unavailable') fail('No room found with that code.', 'no-host');
+      else fail(`Network error: ${err.type}`, err.type);
     });
 
     peer.on('open', id => {
@@ -868,14 +916,38 @@ function startClient(code) {
       });
 
       conn.on('data', onClientMessage);
-      conn.on('close', () => {
-        netStatus.textContent = 'HOST LEFT';
-        for (const a of remotes.values()) a.dispose();
-        remotes.clear();
-        renderRoster();
-      });
+      conn.on('close', () => onHostLost());
     });
   });
+}
+
+/**
+ * The host has gone. Everyone still here waits a random moment and then tries
+ * to claim the room's host ID; exactly one wins, and the rest reconnect to
+ * whoever that turns out to be. The random delay is what keeps the attempts
+ * from colliding, and it is short enough that the gap reads as a hiccup.
+ */
+async function onHostLost() {
+  if (isHost) return;
+
+  netStatus.textContent = 'RECONNECTING';
+
+  for (const a of remotes.values()) a.dispose();
+  remotes.clear();
+  connections.clear();
+  renderRoster();
+
+  try { peer.destroy(); } catch {}
+  peer = null;
+
+  await new Promise(r => setTimeout(r, 300 + Math.random() * 1200));
+
+  try {
+    await enterRoom(roomCode, { allowHost: true });
+    netStatus.textContent = '1 ONLINE';
+  } catch {
+    netStatus.textContent = 'DISCONNECTED';
+  }
 }
 
 function onHostMessage(conn, msg) {
@@ -885,6 +957,13 @@ function onHostMessage(conn, msg) {
   } else if (msg.t === 'state') {
     const avatar = ensureRemote(conn.peer, msg.n);
     applyState(avatar, msg);
+  } else if (msg.t === 'probe') {
+    // Someone on the title screen asking who's here. Answer and forget them —
+    // no avatar is created, so browsing a lobby doesn't put you in it.
+    conn.send({
+      t: 'roster',
+      names: [myName, ...[...remotes.values()].map(a => a.name)]
+    });
   }
 }
 
@@ -906,6 +985,110 @@ function onClientMessage(msg) {
     }
     renderRoster();
   }
+}
+
+/* --------------------------------------------------------------------------
+   Lobby browser
+   Asks each public room who is inside, without joining. One throwaway peer
+   handles every probe; each connection is opened, answered and closed.
+   -------------------------------------------------------------------------- */
+
+const lobbyState = new Map();   // code -> { names, checked }
+let probePeer = null;
+let probeTimer = null;
+
+function getProbePeer() {
+  if (probePeer && !probePeer.destroyed) return Promise.resolve(probePeer);
+
+  return new Promise((resolve, reject) => {
+    const p = new Peer();
+    const timer = setTimeout(() => reject(new Error('probe peer timeout')), 8000);
+
+    p.on('open', () => { clearTimeout(timer); probePeer = p; resolve(p); });
+    p.on('error', err => { clearTimeout(timer); reject(err); });
+  });
+}
+
+function probeLobby(p, code) {
+  return new Promise(resolve => {
+    let settled = false;
+    const conn = p.connect(peerIdFor(code), { reliable: true });
+
+    const finish = names => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { conn.close(); } catch {}
+      resolve(names);
+    };
+
+    // No answer means nobody is hosting, which is a valid result rather than
+    // an error: the lobby is simply empty until someone walks in.
+    const timer = setTimeout(() => finish([]), 3500);
+
+    conn.on('open', () => conn.send({ t: 'probe' }));
+    conn.on('data', msg => { if (msg.t === 'roster') finish(msg.names || []); });
+    conn.on('error', () => finish([]));
+  });
+}
+
+async function refreshLobbies() {
+  let p;
+  try {
+    p = await getProbePeer();
+  } catch {
+    renderLobbies();
+    return;
+  }
+
+  // Sequential, not parallel: several simultaneous connections from one peer
+  // to different rooms is exactly the pattern that trips broker rate limits.
+  for (const lobby of PUBLIC_LOBBIES) {
+    if (peer) return;                       // already in a game; stop polling
+    const names = await probeLobby(p, lobby.code);
+    lobbyState.set(lobby.code, { names, checked: true });
+    renderLobbies();
+  }
+}
+
+function renderLobbies() {
+  const host = el('lobbies');
+  host.innerHTML = '';
+
+  for (const lobby of PUBLIC_LOBBIES) {
+    const state = lobbyState.get(lobby.code);
+    const names = state ? state.names : null;
+    const count = names ? names.length : 0;
+
+    const row = document.createElement('button');
+    row.className = 'lobby' + (count > 0 ? ' live' : '');
+
+    let who;
+    if (!state) who = 'checking…';
+    else if (count === 0) who = 'empty — be the first';
+    else who = names.join(', ');
+
+    row.innerHTML =
+      `<span class="name">${escapeHtml(lobby.name)}</span>` +
+      `<span class="who">${escapeHtml(who)}</span>` +
+      `<span class="count">${state ? count : '·'}</span>`;
+
+    row.addEventListener('click', () => enterGame('public', lobby.code));
+    host.appendChild(row);
+  }
+}
+
+function startLobbyPolling() {
+  renderLobbies();
+  refreshLobbies();
+  clearInterval(probeTimer);
+  probeTimer = setInterval(() => { if (!peer) refreshLobbies(); }, 9000);
+}
+
+function stopLobbyPolling() {
+  clearInterval(probeTimer);
+  probeTimer = null;
+  if (probePeer) { try { probePeer.destroy(); } catch {} probePeer = null; }
 }
 
 function ensureRemote(id, name) {
@@ -1026,12 +1209,20 @@ async function enterGame(mode, code) {
       bindInput();
     }
 
-    if (mode === 'host') {
+    if (mode === 'public') {
+      loadText.textContent = 'Entering lobby…';
+      stopLobbyPolling();
+      await enterRoom(code, { allowHost: true });
+    } else if (mode === 'host') {
       loadText.textContent = 'Opening room…';
+      stopLobbyPolling();
       await startHost(code);
     } else if (mode === 'join') {
       loadText.textContent = 'Joining room…';
+      stopLobbyPolling();
       await startClient(code);
+    } else {
+      stopLobbyPolling();
     }
   } catch (e) {
     console.error(e);
@@ -1041,6 +1232,7 @@ async function enterGame(mode, code) {
       loadScreen.classList.add('hidden');
       titleScreen.classList.remove('hidden');
       titleStatus.textContent = e.message.split('\n')[0];
+      startLobbyPolling();
     }, 2600);
     return;
   }
@@ -1058,7 +1250,10 @@ async function enterGame(mode, code) {
   }
 
   if (mode !== 'solo') {
-    el('roomcode').textContent = roomCode;
+    const lobby = PUBLIC_LOBBIES.find(l => l.code === roomCode);
+    el('roomcode').textContent = lobby ? lobby.name.toUpperCase() : roomCode;
+    roomTag.querySelector('.label').textContent = lobby ? 'LOBBY' : 'ROOM';
+    el('btn-copy').classList.toggle('hidden', !!lobby);
     roomTag.classList.remove('hidden');
     netStatus.classList.remove('hidden');
     renderRoster();
@@ -1069,6 +1264,10 @@ async function enterGame(mode, code) {
 
 el('btn-solo').addEventListener('click', () => enterGame('solo'));
 el('btn-host').addEventListener('click', () => enterGame('host', makeCode()));
+
+// Start browsing as soon as the title screen is up, so the lobby list is
+// already populated by the time someone has finished typing a name.
+startLobbyPolling();
 
 el('btn-join').addEventListener('click', () => {
   const code = el('joincode').value.trim().toUpperCase();
