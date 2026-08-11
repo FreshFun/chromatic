@@ -11,7 +11,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v11 matte';
+const BUILD = 'v13 turn';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -29,11 +29,12 @@ const TURN_SPEED = 7;
 const ACCEL      = 13;
 
 /* A thumb resting on a stick is never perfectly still, and the direction it
-   reports changes a little every frame. Steering straight from that makes the
-   character yaw back and forth as it runs. The heading is smoothed instead,
-   and only updated once the input is pushed past a clear threshold. */
-const HEADING_SMOOTH = 9;
-const STEER_DEADZONE = 0.22;
+   reports changes a little every frame. Both the character's facing and its
+   path are driven from a single smoothed heading so that jitter never reaches
+   either. The deadzone is generous because the noise near the centre of the
+   stick is proportionally largest there. */
+const HEADING_SMOOTH = 12;
+const STICK_DEADZONE = 0.18;
 
 /* The run clip was authored for a slower ground speed than the game now uses,
    so its playback rate scales with how fast the character is actually moving.
@@ -138,6 +139,7 @@ let camAnchorY = 0, camReady = false;
 
 // Networking
 let peer = null, isHost = false, roomCode = null, myId = null, myName = 'anon';
+let reclaiming = false;
 const connections = new Map();    // peerId -> DataConnection
 let netAccumulator = 0;
 
@@ -439,6 +441,7 @@ class Avatar {
 
     // Motion state
     this.speed = 0;
+    this.animRate = RUN_ANIM_MIN;
     this.velY = 0;
     this.grounded = true;
     this.jumpPhase = 'none';
@@ -524,11 +527,15 @@ class Avatar {
     const blend = Math.min(1, this.speed / RUN_SPEED);
     const loco = 1 - this.jumpBlend;
 
-    // Cadence follows real speed, so a half-pushed stick jogs and a full one
-    // sprints, rather than both playing the same stride at different rates
-    // of travel.
-    this.actions.run.timeScale = Math.max(RUN_ANIM_MIN,
+    /* Cadence follows speed, but through its own smoothing. Driving playback
+       rate straight from instantaneous speed makes the clip speed up and slow
+       down every frame as the thumb moves, which shows up as the legs
+       stuttering even when the character is travelling smoothly. */
+    const rateTarget = Math.max(RUN_ANIM_MIN,
       Math.min(RUN_ANIM_MAX, blend * RUN_ANIM_RATE));
+
+    this.animRate += (rateTarget - this.animRate) * (1 - Math.exp(-4 * dt));
+    this.actions.run.timeScale = this.animRate;
 
     this.actions.idle.setEffectiveWeight((1 - blend) * loco);
     this.actions.run.setEffectiveWeight(blend * loco);
@@ -601,6 +608,7 @@ class Avatar {
 const forward = new THREE.Vector3();
 const right   = new THREE.Vector3();
 const move    = new THREE.Vector3();
+const travel  = new THREE.Vector3();
 
 function stepLocal(dt) {
   // Camera-relative movement, flattened onto the ground plane.
@@ -619,39 +627,51 @@ function stepLocal(dt) {
 
   if (stick.id !== null) {
     const mag = Math.min(1, Math.hypot(stick.x, stick.y));
-    if (mag > 0.08) {
+    if (mag > STICK_DEADZONE) {
       move.set(0, 0, 0);
       move.addScaledVector(right, stick.x);
       move.addScaledVector(forward, -stick.y);   // screen-up is forward
-      throttle = mag;
+      throttle = (mag - STICK_DEADZONE) / (1 - STICK_DEADZONE);
+    } else {
+      throttle = 0;
     }
   }
 
   const moving = throttle > 0 && move.lengthSq() > 0.0001;
   if (moving) move.normalize();
 
-  const target = moving ? RUN_SPEED * throttle : 0;
-  local.speed += (target - local.speed) * Math.min(1, dt * ACCEL);
-  local.group.position.addScaledVector(move, local.speed * dt);
-
-  // Face the direction of travel. The target heading is itself smoothed, so
-  // small wobbles in the input never reach the character's facing — only a
-  // sustained push past the deadzone turns it.
-  if (moving && throttle > STEER_DEADZONE) {
+  /* One heading drives both facing and travel.
+   *
+   * A thumb on a stick is never still, so the raw input direction jitters a
+   * few degrees every frame. Steering the character's *path* with that makes
+   * it weave from side to side — the wobble that reads as the character
+   * shaking while it runs. Smoothing only the facing, as an earlier version
+   * did, fixes how it looks while leaving the path just as noisy.
+   *
+   * So the input sets a heading, the heading is smoothed once, and everything
+   * downstream uses it. The character travels exactly where it points. */
+  if (moving) {
     const want = Math.atan2(move.x, move.z);
 
     let d = want - headingTarget;
     while (d >  Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
+
     headingTarget += d * (1 - Math.exp(-HEADING_SMOOTH * dt));
   }
 
-  if (moving) {
-    let diff = headingTarget - local.group.rotation.y;
-    while (diff >  Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    local.group.rotation.y += diff * Math.min(1, dt * TURN_SPEED);
-  }
+  const target = moving ? RUN_SPEED * throttle : 0;
+  local.speed += (target - local.speed) * Math.min(1, dt * ACCEL);
+
+  travel.set(Math.sin(headingTarget), 0, Math.cos(headingTarget));
+  local.group.position.addScaledVector(travel, local.speed * dt);
+
+  // Facing eases onto the same heading, a touch slower, which reads as the
+  // body leaning into a turn rather than pivoting on the spot.
+  let diff = headingTarget - local.group.rotation.y;
+  while (diff >  Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  local.group.rotation.y += diff * (1 - Math.exp(-TURN_SPEED * dt));
 
   // Edge-triggered jump: holding or hammering space cannot restart the clip.
   const down = keys.has('Space');
@@ -944,6 +964,39 @@ const PUBLIC_LOBBIES = [
 
 const isPublic = code => PUBLIC_LOBBIES.some(l => l.code === code);
 
+/* WebRTC needs help getting through NAT. STUN alone works when at least one
+   side has a permissive router, which is typical on home wifi — but mobile
+   carriers hand out symmetric NAT, and two phones on cellular usually cannot
+   see each other at all without a relay to bounce traffic through. Without
+   TURN in this list, joining "fails" on mobile data in a way that looks
+   exactly like the room not existing.
+   
+   These are public relays. They're fine for a small game, but they're shared
+   and can be slow or busy; a real deployment would run its own. */
+const PEER_CONFIG = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ]
+  }
+};
+
 function makeCode() {
   let out = '';
   for (let i = 0; i < 5; i++)
@@ -960,31 +1013,43 @@ const peerIdFor = code => `anon-room-${code}`;
  * mean two people who arrive simultaneously both think they own the room.
  */
 async function enterRoom(code, { allowHost }) {
+  // Each attempt gets a clean peer. Leaving a failed one alive keeps a socket
+  // to the broker open, and the stale error handlers fire later against a
+  // session that has already moved on.
+  const scrap = () => {
+    if (peer) { try { peer.destroy(); } catch {} }
+    peer = null;
+  };
+
   try {
-    await startClient(code);
+    await startClient(code, { timeout: 6000 });
     return;
   } catch (e) {
+    scrap();
     if (!allowHost || e.code !== 'no-host') throw e;
   }
 
   try {
     await startHost(code);
+    return;
   } catch (e) {
-    // Someone claimed it in the gap between our attempts. Join them instead.
-    if (e.code === 'taken') {
-      await new Promise(r => setTimeout(r, 400));
-      await startClient(code);
-      return;
-    }
-    throw e;
+    scrap();
+    if (e.code !== 'taken') throw e;
   }
+
+  /* Someone claimed the room in the gap between our two attempts, which for a
+     busy public lobby is the normal case rather than an edge case. Join them,
+     with a longer window: we now know for certain a host is there, so giving
+     up early would report an empty room that plainly isn't. */
+  await new Promise(r => setTimeout(r, 500));
+  await startClient(code, { timeout: 12000 });
 }
 
 function startHost(code) {
   return new Promise((resolve, reject) => {
     isHost = true;
     roomCode = code;
-    peer = new Peer(peerIdFor(code));
+    peer = new Peer(peerIdFor(code), PEER_CONFIG);
     myId = 'host';
 
     peer.on('open', () => resolve());
@@ -994,8 +1059,14 @@ function startHost(code) {
         const e = new Error('That room code is already taken.');
         e.code = 'taken';
         reject(e);
+      } else if (err.type === 'network' || err.type === 'server-error') {
+        const e = new Error('Cannot reach the matchmaking server. Check your connection.');
+        e.code = 'broker';
+        reject(e);
       } else {
-        reject(new Error(`Network error: ${err.type}`));
+        const e = new Error(`Connection problem (${err.type}).`);
+        e.code = err.type;
+        reject(e);
       }
     });
 
@@ -1012,33 +1083,50 @@ function startHost(code) {
   });
 }
 
-function startClient(code) {
+function startClient(code, { timeout = 9000 } = {}) {
   return new Promise((resolve, reject) => {
     isHost = false;
     roomCode = code;
-    peer = new Peer();
+    peer = new Peer(PEER_CONFIG);
 
+    let settled = false;
     const fail = (message, kind) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       const e = new Error(message);
       e.code = kind;
       reject(e);
     };
 
-    // Short, because for a public lobby this timeout is the normal path to
-    // discovering the room is empty and we should host it ourselves.
-    const timer = setTimeout(() => fail('No room found with that code.', 'no-host'), 5000);
+    const timer = setTimeout(
+      () => fail('Could not reach that room.', 'no-host'), timeout);
 
     peer.on('error', err => {
-      clearTimeout(timer);
-      if (err.type === 'peer-unavailable') fail('No room found with that code.', 'no-host');
-      else fail(`Network error: ${err.type}`, err.type);
+      if (err.type === 'peer-unavailable') {
+        fail('No room found with that code.', 'no-host');
+      } else if (err.type === 'network' || err.type === 'server-error') {
+        // The broker is unreachable — nothing to do with this room, and
+        // retrying as a host would fail for the same reason.
+        fail('Cannot reach the matchmaking server. Check your connection.', 'broker');
+      } else if (err.type === 'browser-incompatible') {
+        fail('This browser does not support the connection type this game needs.', 'browser');
+      } else {
+        fail(`Connection problem (${err.type}).`, err.type);
+      }
     });
 
     peer.on('open', id => {
       myId = id;
-      const conn = peer.connect(peerIdFor(code), { reliable: false });
+
+      // Reliable here, unlike the state stream. Establishing the channel is a
+      // one-off, and a dropped handshake packet reads to the player as the
+      // room not existing.
+      const conn = peer.connect(peerIdFor(code), { reliable: true });
 
       conn.on('open', () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         connections.set('host', conn);
         conn.send({ t: 'hello', name: myName });
@@ -1046,7 +1134,8 @@ function startClient(code) {
       });
 
       conn.on('data', onClientMessage);
-      conn.on('close', () => onHostLost());
+      conn.on('error', () => fail('Could not reach that room.', 'no-host'));
+      conn.on('close', () => { if (settled) onHostLost(); });
     });
   });
 }
@@ -1058,7 +1147,8 @@ function startClient(code) {
  * from colliding, and it is short enough that the gap reads as a hiccup.
  */
 async function onHostLost() {
-  if (isHost) return;
+  if (isHost || reclaiming || !local) return;
+  reclaiming = true;
 
   netStatus.textContent = 'RECONNECTING';
 
@@ -1067,10 +1157,13 @@ async function onHostLost() {
   connections.clear();
   renderRoster();
 
-  try { peer.destroy(); } catch {}
+  if (peer) { try { peer.destroy(); } catch {} }
   peer = null;
 
   await new Promise(r => setTimeout(r, 300 + Math.random() * 1200));
+
+  // The player may have hit Leave while we were waiting.
+  if (!local) { reclaiming = false; return; }
 
   try {
     await enterRoom(roomCode, { allowHost: true });
@@ -1078,6 +1171,8 @@ async function onHostLost() {
   } catch {
     netStatus.textContent = 'DISCONNECTED';
   }
+
+  reclaiming = false;
 }
 
 function onHostMessage(conn, msg) {
@@ -1135,7 +1230,7 @@ function getProbePeer() {
   if (probePeer && !probePeer.destroyed) return Promise.resolve(probePeer);
 
   return new Promise((resolve, reject) => {
-    const p = new Peer();
+    const p = new Peer(PEER_CONFIG);
     const timer = setTimeout(() => reject(new Error('probe peer timeout')), 8000);
 
     p.on('open', () => { clearTimeout(timer); probePeer = p; resolve(p); });
@@ -1358,6 +1453,7 @@ function teardownNetwork() {
 }
 
 function leaveGame() {
+  reclaiming = false;
   teardownNetwork();
 
   for (const a of remotes.values()) a.dispose();
@@ -1451,7 +1547,7 @@ async function enterGame(mode, code) {
     } else if (mode === 'join') {
       loadText.textContent = 'Joining room…';
       stopLobbyPolling();
-      await startClient(code);
+      await startClient(code, { timeout: 12000 });
     } else {
       stopLobbyPolling();
     }
