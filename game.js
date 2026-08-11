@@ -52,7 +52,11 @@ const SILVER_ENV   = 1.6;
 const CAM_DISTANCE = 5.6;
 const CAM_HEIGHT   = 1.35;
 const CAM_SMOOTH   = 10;    // how quickly the camera follows the character
-const LOOK_SMOOTH  = 13;    // how quickly the view settles onto your input
+/* Look smoothing is off: the view maps 1:1 to the mouse, with no easing
+   between where you point and where the camera ends up. Set LOOK_SMOOTHING
+   to true to bring the damping back. */
+const LOOK_SMOOTHING = false;
+const LOOK_SMOOTH    = 13;  // only used when LOOK_SMOOTHING is true
 
 const MOUSE_SENS = 0.0014;
 const TOUCH_SENS = 0.0030;
@@ -545,10 +549,16 @@ function stepLocal(dt) {
 function stepCamera(dt) {
   const p = local.group.position;
 
-  // Ease the view onto whatever the mouse or thumb asked for.
-  const kA = 1 - Math.exp(-LOOK_SMOOTH * dt);
-  yaw   += (yawTarget - yaw) * kA;
-  pitch += (pitchTarget - pitch) * kA;
+  // The view follows the input exactly. Easing here is what reads as the
+  // camera carrying momentum after the mouse has stopped.
+  if (LOOK_SMOOTHING) {
+    const kA = 1 - Math.exp(-LOOK_SMOOTH * dt);
+    yaw   += (yawTarget - yaw) * kA;
+    pitch += (pitchTarget - pitch) * kA;
+  } else {
+    yaw = yawTarget;
+    pitch = pitchTarget;
+  }
 
   // Follow the character's ground position, lagging slightly. Height tracks a
   // separate anchor that freezes mid-air, so jumping never moves the view.
