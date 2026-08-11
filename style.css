@@ -311,22 +311,45 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
 /* ------------------------------------------------------- floating name tag */
 
 /* Rendered as real DOM through CSS2DRenderer, so tags stay legible instead of
-   dissolving into the low-resolution buffer behind them. */
+   dissolving into the low-resolution buffer behind them. The pale plain the
+   game is set on gives almost no contrast, so the label carries its own
+   backdrop rather than relying on a text shadow. */
 .nametag {
-  padding: 2px 7px;
+  position: relative;
+  padding: 3px 9px 4px;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
-  letter-spacing: .06em;
-  color: #fff;
-  background: rgba(8, 9, 11, .68);
-  border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 5px;
+  font-weight: 600;
+  letter-spacing: .07em;
+  line-height: 1.25;
+  color: #f2f5f9;
+  background: rgba(10, 12, 15, .74);
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .34);
   white-space: nowrap;
   pointer-events: none;
-  transform: translateY(-4px);
+  transform-origin: 50% 100%;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
 }
 
-.nametag.self { border-color: rgba(255, 255, 255, .42); }
+/* Small notch beneath, so a label reads as belonging to the figure under it
+   rather than floating loose in the scene. */
+.nametag::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  background: rgba(10, 12, 15, .74);
+  border-right: 1px solid rgba(255, 255, 255, .13);
+  border-bottom: 1px solid rgba(255, 255, 255, .13);
+  transform: rotate(45deg);
+  border-radius: 0 0 2px 0;
+}
 
 /* ---------------------------------------------------- touch controls */
 

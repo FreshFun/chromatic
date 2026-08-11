@@ -63,6 +63,13 @@ const PITCH_MAX = 1.00;
 const NET_HZ       = 15;      // state broadcasts per second
 const NET_TIMEOUT  = 6000;    // drop a silent peer after this long
 
+const TAG_HEIGHT    = 2.15;   // starting height before the first measurement
+const TAG_CLEARANCE = 0.28;   // gap between the top of the head and the label
+const TAG_FADE_NEAR = 3.0;    // full opacity closer than this
+const TAG_FADE_FAR  = 34;     // fully faded beyond this
+
+const tagBox = new THREE.Box3();   // reused; allocating per frame would churn
+
 /* --------------------------------------------------------------------------
    Module state
    -------------------------------------------------------------------------- */
@@ -296,6 +303,9 @@ class Avatar {
     this.group = new THREE.Group();
     this.group.add(model);
     scene.add(this.group);
+    this.model = model;
+    this.tagY = TAG_HEIGHT;
+    this.tagClock = 0;
 
     this.mixer = new THREE.AnimationMixer(model);
     this.actions = {
@@ -329,23 +339,30 @@ class Avatar {
     this.targetRotY = 0;
     this.lastPacket = performance.now();
 
-    this.buildTag();
+    // No tag for yourself — you know who you are, and a label pinned to the
+    // back of your own head just blocks the view.
+    if (!isLocal) this.buildTag();
   }
 
   buildTag() {
     const div = document.createElement('div');
-    div.className = 'nametag' + (this.isLocal ? ' self' : '');
+    div.className = 'nametag';
     div.textContent = this.name;
     this.tagEl = div;
 
     this.tag = new CSS2DObject(div);
-    this.tag.position.set(0, 2.15, 0);
+
+    /* Parented to the group, not the model. The model is what the jump clip
+       moves, so a tag attached there rides the crouch down into the shoulders
+       and the launch up past the head. The group only ever moves with the
+       character's own position, so the tag holds a constant height. */
+    this.tag.position.set(0, TAG_HEIGHT, 0);
     this.group.add(this.tag);
   }
 
   setName(name) {
     this.name = name;
-    this.tagEl.textContent = name;
+    if (this.tagEl) this.tagEl.textContent = name;
   }
 
   startJump() {
@@ -416,10 +433,46 @@ class Avatar {
 
     this.stepJump(dt);
     this.stepAnimation(dt);
+    this.stepTag(dt);
+  }
+
+  /**
+   * Keeps the tag above the character's actual head. The jump clip retains
+   * its vertical root motion, so the body rises inside the group during the
+   * launch — a fixed tag height would end up buried in the shoulders. This
+   * measures where the model really tops out and floats above that, easing
+   * so the label glides rather than snapping between frames.
+   */
+  stepTag(dt) {
+    if (!this.tag) return;
+
+    this.tagClock += dt;
+    if (this.tagClock > 0.08) {
+      this.tagClock = 0;
+      tagBox.setFromObject(this.model);
+      const top = tagBox.max.y - this.group.position.y;
+      if (Number.isFinite(top)) this.tagY = top + TAG_CLEARANCE;
+    }
+
+    const k = 1 - Math.exp(-9 * dt);
+    this.tag.position.y += (this.tagY - this.tag.position.y) * k;
+
+    // Fade with distance. CSS2D labels don't shrink with perspective, so
+    // without this a distant player's name stays full size and ends up
+    // larger on screen than the character wearing it.
+    const d = camera.position.distanceTo(this.group.position);
+    const t = Math.min(1, Math.max(0,
+      (d - TAG_FADE_NEAR) / (TAG_FADE_FAR - TAG_FADE_NEAR)));
+
+    const opacity = 1 - t * 0.82;
+    const scale = 1 - t * 0.34;
+
+    this.tagEl.style.opacity = opacity.toFixed(2);
+    this.tagEl.style.transform = `translateY(-4px) scale(${scale.toFixed(2)})`;
   }
 
   dispose() {
-    this.tag.element.remove();
+    if (this.tag) this.tag.element.remove();
     scene.remove(this.group);
   }
 }
