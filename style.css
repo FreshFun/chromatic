@@ -392,6 +392,51 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
   color: #3d444e;
 }
 
+/* ---------------------------------------------------------- skins */
+
+#skins {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 7px;
+}
+
+.skin {
+  position: relative;
+  aspect-ratio: 1;
+  padding: 0;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* The swatch carries a highlight and a shaded lower edge so a colour reads as
+   a rounded metal body rather than a flat square of paint. */
+.skin i {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255,255,255,.72), rgba(255,255,255,0) 46%),
+    linear-gradient(160deg, rgba(255,255,255,.16), rgba(0,0,0,.42));
+  background-color: var(--swatch);
+}
+
+.skin[aria-pressed="true"] {
+  border-color: var(--signal);
+  box-shadow: 0 0 0 1px var(--signal);
+}
+
+#skin-name {
+  margin: 8px 0 0;
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  text-align: left;
+}
+
 /* ---------------------------------------------------- public lobbies */
 
 #lobbies {

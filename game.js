@@ -11,7 +11,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v14 stages';
+const BUILD = 'v15 skins';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -67,14 +67,25 @@ const JUMP_FADE_OUT = 7;
    1 for a clean render with no pixelation at all. */
 const PIXEL_SIZE = 2;
 
-/* Silver, tuned toward brushed rather than mirror. Roughness is the main
-   dial: it spreads the highlight out into a soft sheen instead of a hard
-   glint. Metalness comes down with it, because a very metallic surface at
-   high roughness just goes muddy. */
-const SILVER       = 0xa9b1bb;
-const SILVER_METAL = 0.58;
-const SILVER_ROUGH = 0.46;
-const SILVER_ENV   = 1.25;
+/* Skins. Colour alone isn't enough to make a tinted metal read correctly:
+   a fully metallic surface shows almost nothing but its reflections, so a red
+   one just looks like grey with a blush. Each skin therefore carries its own
+   metalness, letting the coloured ones keep enough diffuse to actually look
+   red or green while Metal and Gold stay properly reflective. */
+const SKINS = [
+  { id: 'metal',   name: 'Metal',   color: 0xa9b1bb, metal: 0.62, rough: 0.34 },
+  { id: 'crimson', name: 'Crimson', color: 0xb42f2f, metal: 0.48, rough: 0.32 },
+  { id: 'cobalt',  name: 'Cobalt',  color: 0x2a55c0, metal: 0.48, rough: 0.32 },
+  { id: 'emerald', name: 'Emerald', color: 0x1d9160, metal: 0.48, rough: 0.32 },
+  { id: 'gold',    name: 'Gold',    color: 0xd8a52c, metal: 0.78, rough: 0.28 },
+  { id: 'dorfic',  name: 'Dorfic',  color: 0xdc6a24, metal: 0.50, rough: 0.32 }
+];
+
+/* How strongly the environment reflects off every skin. This is the global
+   shine dial — raise for glossier, lower for flatter. */
+const ENV_INTENSITY = 1.45;
+
+let mySkin = 0;
 
 const CAM_DISTANCE = 6.1;
 const CAM_HEIGHT   = 1.35;
@@ -383,28 +394,28 @@ function applyResolution() {
    -------------------------------------------------------------------------- */
 
 class Avatar {
-  constructor(name, isLocal) {
+  constructor(name, isLocal, skin = 0) {
     this.isLocal = isLocal;
     this.name = name;
+    this.skin = -1;
 
     // cloneSkinned rebinds the skeleton properly; a plain .clone() would leave
     // every copy sharing one skeleton and animating in lockstep.
     const model = cloneSkinned(assets.character);
 
-    const silver = new THREE.MeshStandardMaterial({
-      color: SILVER,
-      metalness: SILVER_METAL,
-      roughness: SILVER_ROUGH,
-      envMapIntensity: SILVER_ENV
-    });
+    // One material per avatar rather than one shared between them, or every
+    // player in the room would change colour together.
+    this.material = new THREE.MeshStandardMaterial({ envMapIntensity: ENV_INTENSITY });
 
     model.traverse(o => {
       if (o.isMesh || o.isSkinnedMesh) {
         o.castShadow = true;
         o.frustumCulled = false;   // skinned bounds go stale during animation
-        o.material = silver;
+        o.material = this.material;
       }
     });
+
+    this.setSkin(skin);
 
     // Normalize height, then sit the feet on the ground.
     const box = new THREE.Box3().setFromObject(model);
@@ -472,6 +483,18 @@ class Avatar {
        character's own position, so the tag holds a constant height. */
     this.tag.position.set(0, TAG_HEIGHT, 0);
     this.group.add(this.tag);
+  }
+
+  setSkin(index) {
+    const i = (index | 0) % SKINS.length;
+    if (i === this.skin) return;
+
+    this.skin = i;
+    const s = SKINS[i];
+    this.material.color.setHex(s.color);
+    this.material.metalness = s.metal;
+    this.material.roughness = s.rough;
+    this.material.needsUpdate = true;
   }
 
   setName(name) {
@@ -1145,7 +1168,7 @@ function startClient(code, { timeout = 12000 } = {}) {
         clearTimeout(connTimer);
         clearTimeout(retryTimer);
         connections.set('host', conn);
-        conn.send({ t: 'hello', name: myName });
+        conn.send({ t: 'hello', name: myName, skin: mySkin });
         resolve();
       });
 
@@ -1210,10 +1233,10 @@ async function onHostLost() {
 
 function onHostMessage(conn, msg) {
   if (msg.t === 'hello') {
-    ensureRemote(conn.peer, msg.name);
+    ensureRemote(conn.peer, msg.name, msg.skin);
     renderRoster();
   } else if (msg.t === 'state') {
-    const avatar = ensureRemote(conn.peer, msg.n);
+    const avatar = ensureRemote(conn.peer, msg.n, msg.k);
     applyState(avatar, msg);
   } else if (msg.t === 'bye') {
     dropPeer(conn.peer);
@@ -1238,7 +1261,7 @@ function onClientMessage(msg) {
     for (const s of msg.players) {
       if (s.id === myId) continue;
       seen.add(s.id);
-      applyState(ensureRemote(s.id, s.n), s);
+      applyState(ensureRemote(s.id, s.n, s.k), s);
     }
 
     // Anyone missing from the snapshot has left.
@@ -1352,15 +1375,18 @@ function stopLobbyPolling() {
   if (probePeer) { try { probePeer.destroy(); } catch {} probePeer = null; }
 }
 
-function ensureRemote(id, name) {
+function ensureRemote(id, name, skin) {
   let avatar = remotes.get(id);
+
   if (!avatar) {
-    avatar = new Avatar(name || 'anon', false);
+    avatar = new Avatar(name || 'anon', false, skin || 0);
     remotes.set(id, avatar);
     renderRoster();
-  } else if (name && name !== avatar.name) {
-    avatar.setName(name);
+    return avatar;
   }
+
+  if (name && name !== avatar.name) avatar.setName(name);
+  if (Number.isInteger(skin)) avatar.setSkin(skin);
   return avatar;
 }
 
@@ -1383,6 +1409,7 @@ function localState() {
   return {
     t: 'state',
     n: myName,
+    k: mySkin,
     x: +local.group.position.x.toFixed(2),
     z: +local.group.position.z.toFixed(2),
     r: +local.group.rotation.y.toFixed(3),
@@ -1427,7 +1454,7 @@ function stepNetwork(dt) {
     const players = [{ id: 'host', n: myName, ...stripType(localState()) }];
     for (const [id, a] of remotes) {
       players.push({
-        id, n: a.name,
+        id, n: a.name, k: a.skin,
         x: +a.targetPos.x.toFixed(2),
         z: +a.targetPos.z.toFixed(2),
         r: +a.targetRotY.toFixed(3),
@@ -1597,7 +1624,7 @@ async function enterGame(mode, code) {
     return;
   }
 
-  local = new Avatar(myName, true);
+  local = new Avatar(myName, true, mySkin);
 
   loadScreen.classList.add('hidden');
   document.body.classList.add('playing');
@@ -1631,6 +1658,44 @@ async function enterGame(mode, code) {
 
 el('btn-solo').addEventListener('click', () => enterGame('solo'));
 el('btn-host').addEventListener('click', () => enterGame('host', makeCode()));
+
+/* --------------------------------------------------------------------------
+   Skin picker
+   -------------------------------------------------------------------------- */
+
+function renderSkins() {
+  const host = el('skins');
+  host.innerHTML = '';
+
+  SKINS.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.className = 'skin';
+    b.type = 'button';
+    b.title = s.name;
+    b.setAttribute('aria-label', s.name);
+    b.setAttribute('aria-pressed', String(i === mySkin));
+    b.innerHTML = `<i style="--swatch:#${s.color.toString(16).padStart(6, '0')}"></i>`;
+
+    b.addEventListener('click', () => {
+      mySkin = i;
+      try { localStorage.setItem('anon.skin', String(i)); } catch {}
+      renderSkins();
+      // Applies immediately if a session is somehow already running.
+      if (local) local.setSkin(i);
+    });
+
+    host.appendChild(b);
+  });
+
+  el('skin-name').textContent = SKINS[mySkin].name;
+}
+
+try {
+  const saved = parseInt(localStorage.getItem('anon.skin'), 10);
+  if (Number.isInteger(saved) && saved >= 0 && saved < SKINS.length) mySkin = saved;
+} catch {}
+
+renderSkins();
 
 el('buildtag').textContent = 'build ' + BUILD;
 
