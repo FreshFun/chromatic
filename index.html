@@ -1,125 +1,78 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chromatic</title>
-  <link href="style.css" rel="stylesheet">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ANON</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="app">
 
-    <!-- MENU -->
-    <div id="menuScreen" class="screen">
-      <div class="grid-bg"></div><div class="scanline"></div>
-      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-      <div class="status-bar">
-        <div class="status-dot"></div><div class="status-dot"></div><div class="status-dot"></div>
-        <span class="status-text">System Ready</span>
-      </div>
-      <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;">
-        <div class="logo-ring"><div class="logo-inner"><div class="logo-hex"></div></div></div>
-        <div class="game-title">Chromatic</div>
-        <div class="subtitle">Innovating Ball Physics</div>
-        <div class="divider"></div>
-        <div class="btn-group">
-          <button class="btn primary" id="playBtn"><span class="btn-dot"></span>Play</button>
-          <button class="btn primary" id="inventoryBtn"><span class="btn-dot"></span>Inventory</button>
-          <button class="btn" id="settingsBtn"><span class="btn-dot"></span>Settings</button>
-        </div>
-      </div>
-      <div class="version-tag">v1.0.0</div>
+<!-- ============================= TITLE ============================= -->
+<div id="title" class="screen">
+  <div class="title-inner">
+    <h1 class="wordmark">ANON</h1>
+    <p class="tagline">Nobody knows who you are.</p>
+
+    <div class="field">
+      <label for="username">Username</label>
+      <input id="username" type="text" maxlength="14" autocomplete="off" spellcheck="false" placeholder="anon">
     </div>
 
-    <!-- PLAY SCREEN -->
-    <div id="modeScreen" class="screen hidden">
-      <div class="grid-bg"></div><div class="scanline"></div>
-      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-      <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;gap:24px;">
-        <div style="font-family:'Orbitron',sans-serif;font-size:13px;letter-spacing:6px;color:rgba(100,160,255,0.5);text-transform:uppercase;">Select Mode</div>
-        <button class="btn primary" id="sandboxModeBtn" style="width:260px;font-size:15px;padding:20px 0;"><span class="btn-dot"></span>Sandbox</button>
-      </div>
-      <button class="back-btn" id="backBtn">Back</button>
+    <div class="actions">
+      <button id="btn-solo" class="ghost">Play solo</button>
+      <button id="btn-host" class="primary">Create room</button>
     </div>
 
-    <!-- SETTINGS -->
-    <div id="settingsScreen" class="screen hidden">
-      <div class="grid-bg"></div><div class="scanline"></div>
-      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-      <div style="position:relative;z-index:2;text-align:center;display:flex;flex-direction:column;align-items:center;gap:32px;">
-        <div style="font-family:'Orbitron',sans-serif;font-size:13px;letter-spacing:6px;color:rgba(100,160,255,0.5);text-transform:uppercase;">Settings</div>
-        <div style="display:flex;flex-direction:column;gap:16px;width:280px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid rgba(30,120,255,0.3);padding:14px 20px;background:rgba(10,40,100,0.3);">
-            <span style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:3px;color:#a0c4ff;text-transform:uppercase;">Sound FX</span>
-            <button id="sfxToggle" style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:3px;padding:6px 16px;cursor:pointer;border:1px solid rgba(30,120,255,0.6);background:rgba(30,120,255,0.15);color:#1e78ff;text-transform:uppercase;">ON</button>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;border:1px solid rgba(30,120,255,0.3);padding:14px 20px;background:rgba(10,40,100,0.3);">
-            <span style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:3px;color:#a0c4ff;text-transform:uppercase;">Music</span>
-            <button id="musicToggle" style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:3px;padding:6px 16px;cursor:pointer;border:1px solid rgba(30,120,255,0.6);background:rgba(30,120,255,0.15);color:#1e78ff;text-transform:uppercase;">ON</button>
-          </div>
-        </div>
-      </div>
-      <button class="back-btn" id="settingsBackBtn">Back</button>
+    <div class="divider"><span>or join one</span></div>
+
+    <div class="join-row">
+      <input id="joincode" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="CODE">
+      <button id="btn-join" class="ghost">Join</button>
     </div>
 
-    <!-- INVENTORY -->
-    <div id="inventoryScreen" class="screen hidden">
-      <div class="grid-bg"></div><div class="scanline"></div>
-      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
-      <div class="shop-scanline-overlay"></div>
-
-      <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;width:100%;max-width:500px;padding:0 20px;gap:20px;">
-        <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
-          <div class="shop-title-label">Inventory</div>
-          <div class="shop-divider"></div>
-        </div>
-
-        <div class="shop-balance-card">
-          <div class="shop-balance-icon">◈</div>
-          <div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
-            <div class="shop-balance-label">Total Bounces</div>
-            <div class="shop-balance-value" id="shopBounceDisplay">0</div>
-          </div>
-          <div class="shop-balance-subtext">all time</div>
-        </div>
-
-        <div style="display:flex;flex-direction:column;gap:10px;width:100%;overflow-y:auto;max-height:55vh;padding-right:2px;" id="shopItemsList"></div>
-      </div>
-
-      <button class="back-btn" id="inventoryBackBtn">Back</button>
-    </div>
-
-    <!-- GAME -->
-    <div id="gameScreen" class="screen hidden">
-      <canvas id="gameCanvas"></canvas>
-      <button class="back-btn" id="gameBackBtn">Menu</button>
-      <div class="mode-label" id="modeLabel">Sandbox</div>
-      <div class="bounce-count" id="bounceCount">Bounces: 0</div>
-      <div class="session-total" id="sessionTotal">Total: 0</div>
-      <button id="attrBtn" style="position:absolute;bottom:clamp(16px,3vh,28px);right:clamp(16px,3vw,28px);font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;padding:8px 16px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.5);color:#a0c4ff;text-transform:uppercase;clip-path:polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);z-index:10;">Attributes</button>
-      <div id="attrMenu" style="display:none;position:absolute;top:50%;right:20px;transform:translateY(-50%);background:rgba(2,11,24,0.92);border:1px solid rgba(30,120,255,0.3);padding:20px;z-index:20;min-width:200px;flex-direction:column;gap:12px;">
-        <div style="font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:4px;color:rgba(100,160,255,0.6);text-transform:uppercase;margin-bottom:4px;">Attributes</div>
-
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#a0c4ff;text-transform:uppercase;">Zen</span>
-          <button id="attrZen" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;">OFF</button>
-        </div>
-
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#a0c4ff;text-transform:uppercase;">Mirror</span>
-          <button id="attrMirror" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;">OFF</button>
-        </div>
-
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;color:#a0c4ff;text-transform:uppercase;">Shrink Map</span>
-          <button id="attrShrink" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:2px;padding:5px 12px;cursor:pointer;border:1px solid rgba(30,120,255,0.4);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;">OFF</button>
-        </div>
-
-        <button id="attrClose" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;padding:6px;cursor:pointer;border:1px solid rgba(30,120,255,0.3);background:rgba(10,40,100,0.3);color:#a0c4ff;text-transform:uppercase;margin-top:4px;">Close</button>
-      </div>
-    </div>
-
+    <p id="title-status" class="status"></p>
   </div>
-  <script src="script.js"></script>
+</div>
+
+<!-- ============================= LOADING ============================= -->
+<div id="loading" class="screen hidden">
+  <div class="title-inner">
+    <h1 class="wordmark small">ANON</h1>
+    <p id="loading-text" class="status">Loading character…</p>
+    <div class="bar"><div id="bar-fill"></div></div>
+    <p id="loading-error" class="error"></p>
+  </div>
+</div>
+
+<!-- ============================= IN GAME ============================= -->
+<div id="roomtag" class="hidden">
+  <span class="label">ROOM</span>
+  <span id="roomcode">—</span>
+  <button id="btn-copy" title="Copy code">copy</button>
+</div>
+
+<div id="roster" class="hidden"></div>
+
+<div id="hud" class="hidden">
+  <b>WASD</b> move · <b>Space</b> jump · <b>Mouse</b> look · <b>Esc</b> release cursor
+</div>
+
+<div id="click" class="hidden">Click to play</div>
+
+<div id="netstatus" class="hidden"></div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module" src="game.js"></script>
 </body>
 </html>
