@@ -11,7 +11,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v13 turn';
+const BUILD = 'v14 stages';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -1022,7 +1022,7 @@ async function enterRoom(code, { allowHost }) {
   };
 
   try {
-    await startClient(code, { timeout: 6000 });
+    await startClient(code, { timeout: 7000 });
     return;
   } catch (e) {
     scrap();
@@ -1083,59 +1083,92 @@ function startHost(code) {
   });
 }
 
-function startClient(code, { timeout = 9000 } = {}) {
+function startClient(code, { timeout = 12000 } = {}) {
   return new Promise((resolve, reject) => {
     isHost = false;
     roomCode = code;
     peer = new Peer(PEER_CONFIG);
 
     let settled = false;
+    let registered = false;      // did the broker give us an ID?
+    let attempts = 0;
+    let conn = null;
+
     const fail = (message, kind) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(brokerTimer);
+      clearTimeout(connTimer);
+      clearTimeout(retryTimer);
       const e = new Error(message);
       e.code = kind;
       reject(e);
     };
 
-    const timer = setTimeout(
-      () => fail('Could not reach that room.', 'no-host'), timeout);
+    /* Two separate deadlines, because the two failures need different
+       answers. Never getting an ID means the matchmaking server is down or
+       blocked, and no amount of retrying this room will help. Getting an ID
+       but never reaching the host means the room is empty, or the two devices
+       cannot find a path to each other. */
+    const brokerTimer = setTimeout(() => {
+      if (!registered) {
+        fail('Could not reach the matchmaking server. It may be busy — try again in a moment.', 'broker');
+      }
+    }, 9000);
+
+    let connTimer = null;
+    let retryTimer = null;
 
     peer.on('error', err => {
       if (err.type === 'peer-unavailable') {
         fail('No room found with that code.', 'no-host');
-      } else if (err.type === 'network' || err.type === 'server-error') {
-        // The broker is unreachable — nothing to do with this room, and
-        // retrying as a host would fail for the same reason.
-        fail('Cannot reach the matchmaking server. Check your connection.', 'broker');
+      } else if (err.type === 'network' || err.type === 'server-error'
+                 || err.type === 'socket-error' || err.type === 'socket-closed') {
+        fail('Lost contact with the matchmaking server.', 'broker');
       } else if (err.type === 'browser-incompatible') {
-        fail('This browser does not support the connection type this game needs.', 'browser');
+        fail('This browser cannot make the connection this game needs.', 'browser');
+      } else if (err.type === 'unavailable-id') {
+        fail('Connection id clash — try again.', 'taken');
       } else {
         fail(`Connection problem (${err.type}).`, err.type);
       }
     });
 
-    peer.on('open', id => {
-      myId = id;
-
-      // Reliable here, unlike the state stream. Establishing the channel is a
-      // one-off, and a dropped handshake packet reads to the player as the
-      // room not existing.
-      const conn = peer.connect(peerIdFor(code), { reliable: true });
+    const attempt = () => {
+      attempts++;
+      conn = peer.connect(peerIdFor(code), { reliable: true });
 
       conn.on('open', () => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        clearTimeout(brokerTimer);
+        clearTimeout(connTimer);
+        clearTimeout(retryTimer);
         connections.set('host', conn);
         conn.send({ t: 'hello', name: myName });
         resolve();
       });
 
       conn.on('data', onClientMessage);
-      conn.on('error', () => fail('Could not reach that room.', 'no-host'));
       conn.on('close', () => { if (settled) onHostLost(); });
+    };
+
+    peer.on('open', () => {
+      registered = true;
+      clearTimeout(brokerTimer);
+      attempt();
+
+      /* PeerJS occasionally drops the very first connection attempt, when the
+         signalling handshake and the peer registration cross paths. One quiet
+         retry costs nothing and turns an intermittent "room not found" into a
+         connection that simply takes a moment longer. */
+      retryTimer = setTimeout(() => {
+        if (!settled && attempts < 2) attempt();
+      }, 3000);
+
+      connTimer = setTimeout(() => {
+        fail('Reached the server, but not the room. It may be empty, or the connection is being blocked.', 'no-host');
+      }, timeout);
     });
   });
 }
