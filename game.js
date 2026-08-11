@@ -11,7 +11,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load so it's obvious in the console whether the browser is
    running current code or a cached copy. */
-const BUILD = 'v7 root-detect';
+const BUILD = 'v9 rootfix';
 console.log('ANON build:', BUILD);
 
 /* --------------------------------------------------------------------------
@@ -89,7 +89,7 @@ const PITCH_MIN = -0.42;
 const PITCH_MAX = 1.00;
 
 const NET_HZ       = 15;      // state broadcasts per second
-const NET_TIMEOUT  = 6000;    // drop a silent peer after this long
+const NET_TIMEOUT  = 3500;    // drop a silent peer after this long
 
 const TAG_HEIGHT    = 2.15;   // starting height before the first measurement
 const TAG_CLEARANCE = 0.28;   // gap between the top of the head and the label
@@ -207,38 +207,60 @@ async function loadAssets() {
  * removes the whole-body swivel, not the performance.
  */
 function lockRootMotion(clip) {
-  /* Which bone carries the travel isn't knowable from a name — it depends on
-     how the clip was rigged and exported, and guessing wrongly means either a
-     drifting character or a frozen one. So measure instead: whichever bone's
-     position track moves furthest horizontally is the root. Freezing that
-     bone's rotation is what stops the whole body swivelling as it runs, while
-     every other bone keeps its full animation. */
+  /* Identifying the bone that carries the travel is the whole problem here.
+     Freezing the right one stops the body swivelling as it runs; freezing the
+     wrong one nails a limb into its rest pose, which is why an earlier attempt
+     left the character starfishing mid-jump.
+
+     Name comes first, because it's unambiguous when it matches. Travel is only
+     a fallback, and only when a bone genuinely moves — in a vertical jump
+     nothing travels horizontally, so picking "the furthest mover" there just
+     returns an arbitrary bone. The blacklist is the last line of defence: no
+     limb should ever be a candidate, whatever the numbers say. */
+  const LIMB = /(arm|leg|hand|foot|toe|head|neck|shoulder|clavicle|finger|thumb|spine|torso|chest)/i;
+
+  const boneOf = name => name.split('.')[0].replace(/^\.?bones\[|\]$/g, '');
+
   let rootBone = null;
-  let rootTravel = -1;
 
   for (const track of clip.tracks) {
-    if (!track.name.endsWith('.position')) continue;
-
-    const v = track.values;
-    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-
-    for (let i = 0; i < v.length; i += 3) {
-      if (v[i]     < minX) minX = v[i];
-      if (v[i]     > maxX) maxX = v[i];
-      if (v[i + 2] < minZ) minZ = v[i + 2];
-      if (v[i + 2] > maxZ) maxZ = v[i + 2];
-    }
-
-    const travel = Math.max(maxX - minX, maxZ - minZ);
-    if (travel > rootTravel) {
-      rootTravel = travel;
-      rootBone = track.name.split('.')[0];
+    const bone = boneOf(track.name).toLowerCase();
+    if (bone === 'root' || bone === 'armature' || bone.endsWith(':hips') || bone === 'hips') {
+      rootBone = boneOf(track.name);
+      break;
     }
   }
 
+  if (!rootBone) {
+    let best = 0;
+    for (const track of clip.tracks) {
+      if (!track.name.endsWith('.position')) continue;
+
+      const bone = boneOf(track.name);
+      if (LIMB.test(bone)) continue;
+
+      const v = track.values;
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (let i = 0; i < v.length; i += 3) {
+        if (v[i]     < minX) minX = v[i];
+        if (v[i]     > maxX) maxX = v[i];
+        if (v[i + 2] < minZ) minZ = v[i + 2];
+        if (v[i + 2] > maxZ) maxZ = v[i + 2];
+      }
+
+      const travel = Math.max(maxX - minX, maxZ - minZ);
+      if (travel > best) { best = travel; rootBone = bone; }
+    }
+
+    // Nothing moved far enough to be the travelling bone. Freeze nothing:
+    // a little residual swivel is much better than a broken pose.
+    if (best < 0.01) rootBone = null;
+  }
+
+  if (rootBone && LIMB.test(rootBone)) rootBone = null;
+
   for (const track of clip.tracks) {
     const v = track.values;
-    const bone = track.name.split('.')[0];
 
     if (track.name.endsWith('.position')) {
       // Hold horizontal travel at frame one. Vertical stays, since that is
@@ -247,7 +269,8 @@ function lockRootMotion(clip) {
         v[i] = v[0];
         v[i + 2] = v[2];
       }
-    } else if (track.name.endsWith('.quaternion') && bone === rootBone) {
+    } else if (rootBone && track.name.endsWith('.quaternion')
+               && boneOf(track.name) === rootBone) {
       for (let i = 0; i < v.length; i += 4) {
         v[i]     = v[0];
         v[i + 1] = v[1];
@@ -758,12 +781,21 @@ function bindInput() {
 
   // Pointer lock is a desktop idea; on a phone the game just starts.
   if (!IS_TOUCH) {
-    clickLayer.addEventListener('click', requestLock);
+    // Clicking the backdrop resumes; the buttons handle themselves.
+    clickLayer.addEventListener('click', e => {
+      if (e.target === clickLayer) requestLock();
+    });
     renderer.domElement.addEventListener('click', requestLock);
 
     document.addEventListener('pointerlockchange', () => {
       pointerLocked = document.pointerLockElement === renderer.domElement;
       clickLayer.classList.toggle('hidden', pointerLocked);
+
+      // Escape releases the cursor, which is the browser's own shortcut and
+      // can't be intercepted — so treat losing the lock as opening a pause
+      // menu rather than as an accident.
+      el('pause-title').textContent = 'Paused';
+
       if (pointerLocked) ignoreNextMove = true;
       else keys.clear();
     });
@@ -1053,6 +1085,8 @@ function onHostMessage(conn, msg) {
   } else if (msg.t === 'state') {
     const avatar = ensureRemote(conn.peer, msg.n);
     applyState(avatar, msg);
+  } else if (msg.t === 'bye') {
+    dropPeer(conn.peer);
   } else if (msg.t === 'probe') {
     // Someone on the title screen asking who's here. Answer and forget them —
     // no avatar is created, so browsing a lobby doesn't put you in it.
@@ -1066,6 +1100,10 @@ function onHostMessage(conn, msg) {
 function onClientMessage(msg) {
   if (msg.t === 'welcome') {
     myId = msg.id;
+  } else if (msg.t === 'hostleaving') {
+    // A courtesy warning, so takeover starts now rather than after the
+    // connection eventually times out.
+    onHostLost();
   } else if (msg.t === 'snapshot') {
     const seen = new Set();
 
@@ -1226,6 +1264,29 @@ function localState() {
   };
 }
 
+/**
+ * Removes players who have stopped sending state.
+ *
+ * This is the safety net behind every other disconnect path. A phone that
+ * closes a tab, loses signal, or is simply swiped away often never sends a
+ * clean goodbye, and the connection can stay nominally open for a long time
+ * afterwards — so silence, not a close event, is what actually defines
+ * someone having left.
+ */
+function pruneStale() {
+  if (!isHost) return;
+  const now = performance.now();
+  for (const [id, avatar] of [...remotes]) {
+    if (now - avatar.lastPacket > NET_TIMEOUT) dropPeer(id);
+  }
+}
+
+/* Run on a timer as well as in the render loop. Browsers throttle animation
+   frames in a backgrounded tab, and on mobile they stop entirely — without
+   this, a host whose phone is in their pocket would freeze its roster and
+   keep reporting players who left minutes ago. */
+setInterval(pruneStale, 1500);
+
 function stepNetwork(dt) {
   if (!peer) return;
 
@@ -1234,11 +1295,7 @@ function stepNetwork(dt) {
   netAccumulator = 0;
 
   if (isHost) {
-    // Prune anyone who has gone quiet, then publish the world.
-    const now = performance.now();
-    for (const [id, avatar] of [...remotes]) {
-      if (now - avatar.lastPacket > NET_TIMEOUT) dropPeer(id);
-    }
+    pruneStale();
 
     const players = [{ id: 'host', n: myName, ...stripType(localState()) }];
     for (const [id, a] of remotes) {
@@ -1263,6 +1320,85 @@ function stepNetwork(dt) {
 
   netStatus.textContent = `${remotes.size + 1} ONLINE`;
 }
+
+/**
+ * Tells the room we're going, then tears the session down.
+ *
+ * The goodbye is best-effort — a closing tab may not get the packet out, which
+ * is exactly why the host also prunes on silence. Sending it anyway makes the
+ * common case (pressing Leave) instant instead of a three-second fade.
+ */
+function sayGoodbye() {
+  if (!peer) return;
+
+  try {
+    if (isHost) {
+      for (const conn of connections.values()) {
+        if (conn.open) conn.send({ t: 'hostleaving' });
+      }
+    } else {
+      const conn = connections.get('host');
+      if (conn && conn.open) conn.send({ t: 'bye' });
+    }
+  } catch {}
+}
+
+function teardownNetwork() {
+  sayGoodbye();
+
+  for (const conn of connections.values()) {
+    try { conn.close(); } catch {}
+  }
+  connections.clear();
+
+  if (peer) { try { peer.destroy(); } catch {} }
+  peer = null;
+  isHost = false;
+  roomCode = null;
+  myId = null;
+}
+
+function leaveGame() {
+  teardownNetwork();
+
+  for (const a of remotes.values()) a.dispose();
+  remotes.clear();
+
+  if (local) { local.dispose(); local = null; }
+
+  if (renderer) renderer.setAnimationLoop(null);
+
+  // Reset per-session state so a second visit doesn't inherit the first.
+  camReady = false;
+  keys.clear();
+  stick.id = null;
+  stick.x = stick.y = 0;
+  look.id = null;
+  yaw = yawTarget = 0;
+  pitch = pitchTarget = 0.26;
+  headingTarget = 0;
+
+  if (document.pointerLockElement) document.exitPointerLock();
+  document.body.classList.remove('playing');
+
+  clickLayer.classList.add('hidden');
+  roomTag.classList.add('hidden');
+  rosterEl.classList.add('hidden');
+  netStatus.classList.add('hidden');
+  el('hud').classList.add('hidden');
+  el('touch').classList.add('hidden');
+  el('stick').classList.add('hidden');
+
+  titleScreen.classList.remove('hidden');
+  titleStatus.textContent = '';
+  lobbyState.clear();
+  startLobbyPolling();
+}
+
+/* A closed tab, a swiped-away browser, or a phone going to sleep. pagehide is
+   the one that fires reliably on iOS; beforeunload does not. */
+addEventListener('pagehide', () => teardownNetwork());
+addEventListener('beforeunload', () => teardownNetwork());
 
 function stripType(s) {
   const { t, ...rest } = s;
@@ -1345,14 +1481,21 @@ async function enterGame(mode, code) {
     el('hud').classList.remove('hidden');
   }
 
+  const lobby = PUBLIC_LOBBIES.find(l => l.code === roomCode);
+
   if (mode !== 'solo') {
-    const lobby = PUBLIC_LOBBIES.find(l => l.code === roomCode);
     el('roomcode').textContent = lobby ? lobby.name.toUpperCase() : roomCode;
     roomTag.querySelector('.label').textContent = lobby ? 'LOBBY' : 'ROOM';
     el('btn-copy').classList.toggle('hidden', !!lobby);
     roomTag.classList.remove('hidden');
     netStatus.classList.remove('hidden');
     renderRoster();
+  } else {
+    // Solo still needs a way out, so the tag stays — just without a code.
+    el('roomcode').textContent = 'SOLO';
+    roomTag.querySelector('.label').textContent = '';
+    el('btn-copy').classList.add('hidden');
+    roomTag.classList.remove('hidden');
   }
 
   renderer.setAnimationLoop(tick);
@@ -1391,3 +1534,21 @@ el('btn-copy').addEventListener('click', async () => {
     el('btn-copy').textContent = roomCode;
   }
 });
+
+el('btn-resume').addEventListener('click', e => {
+  e.stopPropagation();
+  if (renderer) renderer.domElement.requestPointerLock();
+});
+
+el('btn-quit').addEventListener('click', e => {
+  e.stopPropagation();
+  leaveGame();
+});
+
+// The in-game leave button, for touch where there is no pause menu.
+el('btn-leave').addEventListener('click', leaveGame);
+el('btn-leave').addEventListener('touchstart', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  leaveGame();
+}, { passive: false });
