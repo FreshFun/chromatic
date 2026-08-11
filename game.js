@@ -11,7 +11,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v10 hipyaw';
+const BUILD = 'v11 matte';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -66,17 +66,14 @@ const JUMP_FADE_OUT = 7;
    1 for a clean render with no pixelation at all. */
 const PIXEL_SIZE = 2;
 
-/* Silver. Three values do the work together and can't be tuned in isolation.
-   Metalness high enough that the surface is mostly reflection, which is what
-   produces the bright rim and the dark shading between limbs, but not so
-   high that nothing diffuse remains to keep it off black. Roughness low, so
-   highlights stay tight and read as polished rather than chalky. Base colour
-   a mid grey, because a near-white base pushes even a metal surface toward
-   flat matte plastic. */
-const SILVER       = 0x9fa8b2;
-const SILVER_METAL = 0.82;
-const SILVER_ROUGH = 0.22;
-const SILVER_ENV   = 2.0;
+/* Silver, tuned toward brushed rather than mirror. Roughness is the main
+   dial: it spreads the highlight out into a soft sheen instead of a hard
+   glint. Metalness comes down with it, because a very metallic surface at
+   high roughness just goes muddy. */
+const SILVER       = 0xa9b1bb;
+const SILVER_METAL = 0.58;
+const SILVER_ROUGH = 0.46;
+const SILVER_ENV   = 1.25;
 
 const CAM_DISTANCE = 6.1;
 const CAM_HEIGHT   = 1.35;
@@ -336,7 +333,7 @@ function buildScene() {
   /* A dim cool light from behind and to the side. On a metal surface this is
      what draws the bright edge down the shoulders and arms — the detail that
      separates polished metal from a flat grey shape. */
-  const rim = new THREE.DirectionalLight(0xbcd4f0, 1.1);
+  const rim = new THREE.DirectionalLight(0xbcd4f0, 0.7);
   rim.position.set(-9, 7, -11);
   scene.add(rim);
 
