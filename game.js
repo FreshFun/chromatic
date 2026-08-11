@@ -51,7 +51,14 @@ const SILVER_ENV   = 1.6;
 
 const CAM_DISTANCE = 5.6;
 const CAM_HEIGHT   = 1.35;
-const CAM_SMOOTH   = 14;
+const CAM_SMOOTH   = 10;    // how quickly the camera follows the character
+const LOOK_SMOOTH  = 16;    // how quickly the view settles onto your input
+
+const MOUSE_SENS = 0.0014;
+const TOUCH_SENS = 0.0030;
+
+const PITCH_MIN = -0.42;
+const PITCH_MAX = 1.00;
 
 const NET_HZ       = 15;      // state broadcasts per second
 const NET_TIMEOUT  = 6000;    // drop a silent peer after this long
@@ -69,7 +76,12 @@ const keys = new Set();
 let local = null;                 // Avatar for this player
 const remotes = new Map();        // peerId -> Avatar
 
-let yaw = 0, pitch = 0.26, pointerLocked = false;
+/* Input writes to the *target* angles; the camera eases onto them each frame.
+   Smoothing the angle itself keeps rotation rigid relative to the character,
+   which is what stops the view swimming. */
+let yawTarget = 0, pitchTarget = 0.26;
+let yaw = 0, pitch = 0.26;
+let pointerLocked = false;
 let spaceWasDown = false;
 
 /* Touch input. The stick reports an analog vector rather than a boolean, so
@@ -82,7 +94,7 @@ const stick = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
 const look  = { id: null, lx: 0, ly: 0 };
 
 // Camera follows a ground anchor, never the character's live height.
-const camPos = new THREE.Vector3();
+const followPos = new THREE.Vector3();
 let camAnchorY = 0, camReady = false;
 
 // Networking
@@ -480,32 +492,39 @@ function stepLocal(dt) {
 function stepCamera(dt) {
   const p = local.group.position;
 
+  // Ease the view onto whatever the mouse or thumb asked for.
+  const kA = 1 - Math.exp(-LOOK_SMOOTH * dt);
+  yaw   += (yawTarget - yaw) * kA;
+  pitch += (pitchTarget - pitch) * kA;
+
+  // Follow the character's ground position, lagging slightly. Height tracks a
+  // separate anchor that freezes mid-air, so jumping never moves the view.
+  const kP = 1 - Math.exp(-CAM_SMOOTH * dt);
   const anchorRate = local.grounded ? 12 : 0;
   camAnchorY += (p.y - camAnchorY) * (1 - Math.exp(-anchorRate * dt));
 
-  const focusY = camAnchorY + CAM_HEIGHT;
-  const flat = Math.cos(pitch) * CAM_DISTANCE;
-
-  const dx = p.x - Math.sin(yaw) * flat;
-  const dy = focusY + Math.sin(pitch) * CAM_DISTANCE;
-  const dz = p.z - Math.cos(yaw) * flat;
-
   if (!camReady) {
+    followPos.set(p.x, 0, p.z);
     camAnchorY = p.y;
-    camPos.set(dx, dy, dz);
     camReady = true;
   }
 
-  const k = 1 - Math.exp(-CAM_SMOOTH * dt);
-  camPos.x += (dx - camPos.x) * k;
-  camPos.y += (dy - camPos.y) * k;
-  camPos.z += (dz - camPos.z) * k;
+  followPos.x += (p.x - followPos.x) * kP;
+  followPos.z += (p.z - followPos.z) * kP;
 
-  camera.position.copy(camPos);
+  // The orbit offset is applied rigidly on top of the followed point. Damping
+  // the final camera position instead is what used to make the character
+  // slide across the screen whenever the view turned.
+  const flat = Math.cos(pitch) * CAM_DISTANCE;
+
+  camera.position.set(
+    followPos.x - Math.sin(yaw) * flat,
+    camAnchorY + CAM_HEIGHT + Math.sin(pitch) * CAM_DISTANCE,
+    followPos.z - Math.cos(yaw) * flat
+  );
+
   if (camera.position.y < 0.4) camera.position.y = 0.4;
 
-  // Fixed orientation from the input angles. Deriving it from a damped
-  // look-at target is what made the view wobble.
   camera.rotation.set(-pitch, yaw + Math.PI, 0);
 }
 
@@ -565,9 +584,12 @@ function bindInput() {
 
   addEventListener('mousemove', e => {
     if (!pointerLocked) return;
-    yaw   -= e.movementX * 0.0024;
-    pitch -= e.movementY * 0.0024;
-    pitch = Math.max(-0.45, Math.min(1.05, pitch));
+    yawTarget -= e.movementX * MOUSE_SENS;
+
+    // Plus, not minus. Pushing the mouse forward should raise your view, and
+    // the sign was backwards, which is why it felt inverted.
+    pitchTarget += e.movementY * MOUSE_SENS;
+    pitchTarget = Math.max(PITCH_MIN, Math.min(PITCH_MAX, pitchTarget));
   });
 
   if (IS_TOUCH) bindTouch();
@@ -635,9 +657,9 @@ function bindTouch() {
         stick.y = dy / STICK_RADIUS;
 
       } else if (t.identifier === look.id) {
-        yaw   -= (t.clientX - look.lx) * 0.006;
-        pitch -= (t.clientY - look.ly) * 0.006;
-        pitch = Math.max(-0.45, Math.min(1.05, pitch));
+        yawTarget   -= (t.clientX - look.lx) * TOUCH_SENS;
+        pitchTarget += (t.clientY - look.ly) * TOUCH_SENS;
+        pitchTarget = Math.max(PITCH_MIN, Math.min(PITCH_MAX, pitchTarget));
         look.lx = t.clientX;
         look.ly = t.clientY;
       }
