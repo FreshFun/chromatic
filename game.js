@@ -72,6 +72,15 @@ const remotes = new Map();        // peerId -> Avatar
 let yaw = 0, pitch = 0.26, pointerLocked = false;
 let spaceWasDown = false;
 
+/* Touch input. The stick reports an analog vector rather than a boolean, so
+   a half-pushed thumb gives a slower run and the idle/run blend follows it
+   instead of snapping between two speeds. */
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+const STICK_RADIUS = 50;
+
+const stick = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
+const look  = { id: null, lx: 0, ly: 0 };
+
 // Camera follows a ground anchor, never the character's live height.
 const camPos = new THREE.Vector3();
 let camAnchorY = 0, camReady = false;
@@ -191,7 +200,7 @@ function buildScene() {
   sun = new THREE.DirectionalLight(0xfff4e2, 1.9);
   sun.position.set(12, 20, 8);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
   const s = 25;
   Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 70 });
   sun.shadow.camera.updateProjectionMatrix();
@@ -422,10 +431,24 @@ function stepLocal(dt) {
   if (keys.has('KeyD')) move.add(right);
   if (keys.has('KeyA')) move.sub(right);
 
-  const moving = move.lengthSq() > 0.0001;
+  // Keyboard input is all-or-nothing; the stick is analog. Whichever is
+  // pushed harder wins, so both can be live without fighting.
+  let throttle = move.lengthSq() > 0.0001 ? 1 : 0;
+
+  if (stick.id !== null) {
+    const mag = Math.min(1, Math.hypot(stick.x, stick.y));
+    if (mag > 0.08) {
+      move.set(0, 0, 0);
+      move.addScaledVector(right, stick.x);
+      move.addScaledVector(forward, -stick.y);   // screen-up is forward
+      throttle = mag;
+    }
+  }
+
+  const moving = throttle > 0 && move.lengthSq() > 0.0001;
   if (moving) move.normalize();
 
-  const target = moving ? RUN_SPEED : 0;
+  const target = moving ? RUN_SPEED * throttle : 0;
   local.speed += (target - local.speed) * Math.min(1, dt * ACCEL);
   local.group.position.addScaledVector(move, local.speed * dt);
 
@@ -527,14 +550,18 @@ function bindInput() {
   addEventListener('blur', () => keys.clear());
 
   const requestLock = () => renderer.domElement.requestPointerLock();
-  clickLayer.addEventListener('click', requestLock);
-  renderer.domElement.addEventListener('click', requestLock);
 
-  document.addEventListener('pointerlockchange', () => {
-    pointerLocked = document.pointerLockElement === renderer.domElement;
-    clickLayer.classList.toggle('hidden', pointerLocked);
-    if (!pointerLocked) keys.clear();
-  });
+  // Pointer lock is a desktop idea; on a phone the game just starts.
+  if (!IS_TOUCH) {
+    clickLayer.addEventListener('click', requestLock);
+    renderer.domElement.addEventListener('click', requestLock);
+
+    document.addEventListener('pointerlockchange', () => {
+      pointerLocked = document.pointerLockElement === renderer.domElement;
+      clickLayer.classList.toggle('hidden', pointerLocked);
+      if (!pointerLocked) keys.clear();
+    });
+  }
 
   addEventListener('mousemove', e => {
     if (!pointerLocked) return;
@@ -542,6 +569,106 @@ function bindInput() {
     pitch -= e.movementY * 0.0024;
     pitch = Math.max(-0.45, Math.min(1.05, pitch));
   });
+
+  if (IS_TOUCH) bindTouch();
+}
+
+/* --------------------------------------------------------------------------
+   Touch
+   Left half of the screen drives a thumb stick that appears where you press;
+   the right half is a look-drag. Both are tracked by touch identifier, so
+   they work simultaneously and neither steals the other's finger.
+   -------------------------------------------------------------------------- */
+
+function bindTouch() {
+  document.body.classList.add('touch');
+
+  const layer = el('touch');
+  const stickEl = el('stick');
+  const knobEl = el('knob');
+  const jumpBtn = el('btn-jump');
+
+  const showStick = (x, y) => {
+    stickEl.style.left = x + 'px';
+    stickEl.style.top = y + 'px';
+    stickEl.classList.remove('hidden');
+  };
+
+  const moveKnob = (dx, dy) => {
+    knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
+  };
+
+  addEventListener('touchstart', e => {
+    for (const t of e.changedTouches) {
+      if (t.target === jumpBtn) continue;         // handled separately
+
+      if (t.clientX < innerWidth * 0.5 && stick.id === null) {
+        stick.id = t.identifier;
+        stick.ox = t.clientX;
+        stick.oy = t.clientY;
+        stick.x = stick.y = 0;
+        showStick(t.clientX, t.clientY);
+        moveKnob(0, 0);
+      } else if (look.id === null) {
+        look.id = t.identifier;
+        look.lx = t.clientX;
+        look.ly = t.clientY;
+      }
+    }
+  }, { passive: false });
+
+  addEventListener('touchmove', e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === stick.id) {
+        let dx = t.clientX - stick.ox;
+        let dy = t.clientY - stick.oy;
+
+        // Clamp the knob to the ring, but keep the direction.
+        const dist = Math.hypot(dx, dy);
+        if (dist > STICK_RADIUS) {
+          dx *= STICK_RADIUS / dist;
+          dy *= STICK_RADIUS / dist;
+        }
+
+        moveKnob(dx, dy);
+        stick.x = dx / STICK_RADIUS;
+        stick.y = dy / STICK_RADIUS;
+
+      } else if (t.identifier === look.id) {
+        yaw   -= (t.clientX - look.lx) * 0.006;
+        pitch -= (t.clientY - look.ly) * 0.006;
+        pitch = Math.max(-0.45, Math.min(1.05, pitch));
+        look.lx = t.clientX;
+        look.ly = t.clientY;
+      }
+    }
+    if (e.cancelable) e.preventDefault();
+  }, { passive: false });
+
+  const endTouch = e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === stick.id) {
+        stick.id = null;
+        stick.x = stick.y = 0;
+        stickEl.classList.add('hidden');
+      } else if (t.identifier === look.id) {
+        look.id = null;
+      }
+    }
+  };
+
+  addEventListener('touchend', endTouch);
+  addEventListener('touchcancel', endTouch);
+
+  // touchstart rather than click, so the jump fires on contact instead of
+  // waiting for the finger to lift.
+  jumpBtn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (local) local.startJump();
+  }, { passive: false });
+
+  // Belt and braces against double-tap zoom on iOS.
+  layer.addEventListener('dblclick', e => e.preventDefault());
 }
 
 /* --------------------------------------------------------------------------
@@ -799,8 +926,14 @@ async function enterGame(mode, code) {
   local = new Avatar(myName, true);
 
   loadScreen.classList.add('hidden');
-  clickLayer.classList.remove('hidden');
-  el('hud').classList.remove('hidden');
+  document.body.classList.add('playing');
+
+  if (IS_TOUCH) {
+    el('touch').classList.remove('hidden');
+  } else {
+    clickLayer.classList.remove('hidden');
+    el('hud').classList.remove('hidden');
+  }
 
   if (mode !== 'solo') {
     el('roomcode').textContent = roomCode;

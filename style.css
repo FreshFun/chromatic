@@ -328,6 +328,81 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
 
 .nametag.self { border-color: rgba(255, 255, 255, .42); }
 
+/* ---------------------------------------------------- touch controls */
+
+/* The layer itself is transparent and passes touches through; only the
+   stick and the jump button capture them. */
+#touch {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+  touch-action: none;
+}
+
+#stick {
+  position: absolute;
+  width: 116px;
+  height: 116px;
+  margin: -58px 0 0 -58px;      /* centre on the reported touch point */
+  border: 1px solid rgba(255, 255, 255, .22);
+  background: rgba(8, 9, 11, .28);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+#knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  background: rgba(232, 237, 243, .78);
+  border-radius: 50%;
+}
+
+#btn-jump {
+  position: absolute;
+  right: 26px;
+  bottom: 40px;
+  width: 86px;
+  height: 86px;
+  padding: 0;
+  font-size: 11px;
+  letter-spacing: .14em;
+  color: var(--text);
+  background: rgba(8, 9, 11, .42);
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#btn-jump:active {
+  background: rgba(232, 237, 243, .82);
+  color: #0b0d10;
+}
+
+/* On a phone the keyboard hint is noise, and the safe area keeps the
+   controls clear of the home indicator. */
+body.touch #hud { display: none; }
+
+body.touch #btn-jump { bottom: calc(40px + env(safe-area-inset-bottom)); }
+
+body.touch #roomtag { top: calc(14px + env(safe-area-inset-top)); }
+body.touch #roster  { top: calc(14px + env(safe-area-inset-top)); }
+
+/* Stops the browser treating a control drag as a page scroll or a
+   double-tap zoom while the game is running. */
+body.playing {
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* ---------------------------------------------------------------- a11y */
 
 @media (prefers-reduced-motion: reduce) {

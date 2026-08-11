@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>ANON</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -59,6 +62,13 @@
 </div>
 
 <div id="click" class="hidden">Click to play</div>
+
+<!-- Touch controls. The stick is positioned wherever the thumb lands rather
+     than pinned to a fixed spot, so it works for any hand size or grip. -->
+<div id="touch" class="hidden">
+  <div id="stick" class="hidden"><div id="knob"></div></div>
+  <button id="btn-jump" aria-label="Jump">JUMP</button>
+</div>
 
 <div id="netstatus" class="hidden"></div>
 
