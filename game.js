@@ -9,6 +9,11 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { MODELS, toBuffer } from './assets.js';
 
+/* Printed on load so it's obvious in the console whether the browser is
+   running current code or a cached copy. */
+const BUILD = 'v7 root-detect';
+console.log('ANON build:', BUILD);
+
 /* --------------------------------------------------------------------------
    Tuning
    -------------------------------------------------------------------------- */
@@ -202,24 +207,47 @@ async function loadAssets() {
  * removes the whole-body swivel, not the performance.
  */
 function lockRootMotion(clip) {
-  const isRoot = name => {
-    const bone = name.split('.')[0].replace(/^\.?bones\[|\]$/g, '').toLowerCase();
-    return bone === 'root' || bone === 'armature';
-  };
+  /* Which bone carries the travel isn't knowable from a name — it depends on
+     how the clip was rigged and exported, and guessing wrongly means either a
+     drifting character or a frozen one. So measure instead: whichever bone's
+     position track moves furthest horizontally is the root. Freezing that
+     bone's rotation is what stops the whole body swivelling as it runs, while
+     every other bone keeps its full animation. */
+  let rootBone = null;
+  let rootTravel = -1;
+
+  for (const track of clip.tracks) {
+    if (!track.name.endsWith('.position')) continue;
+
+    const v = track.values;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+
+    for (let i = 0; i < v.length; i += 3) {
+      if (v[i]     < minX) minX = v[i];
+      if (v[i]     > maxX) maxX = v[i];
+      if (v[i + 2] < minZ) minZ = v[i + 2];
+      if (v[i + 2] > maxZ) maxZ = v[i + 2];
+    }
+
+    const travel = Math.max(maxX - minX, maxZ - minZ);
+    if (travel > rootTravel) {
+      rootTravel = travel;
+      rootBone = track.name.split('.')[0];
+    }
+  }
 
   for (const track of clip.tracks) {
     const v = track.values;
+    const bone = track.name.split('.')[0];
 
     if (track.name.endsWith('.position')) {
-      // Applied to every bone. Only the root actually travels, so this is a
-      // no-op elsewhere, and it doesn't depend on guessing the root's name.
+      // Hold horizontal travel at frame one. Vertical stays, since that is
+      // what gives the jump its arc.
       for (let i = 0; i < v.length; i += 3) {
         v[i] = v[0];
         v[i + 2] = v[2];
       }
-    } else if (track.name.endsWith('.quaternion') && isRoot(track.name)) {
-      // Rotation is name-matched, because flattening it on every bone would
-      // freeze the entire performance into a T-pose.
+    } else if (track.name.endsWith('.quaternion') && bone === rootBone) {
       for (let i = 0; i < v.length; i += 4) {
         v[i]     = v[0];
         v[i + 1] = v[1];
@@ -228,6 +256,7 @@ function lockRootMotion(clip) {
       }
     }
   }
+
   return clip;
 }
 
