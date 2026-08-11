@@ -7,17 +7,11 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+import { MODELS, toBuffer } from './assets.js';
 
 /* --------------------------------------------------------------------------
    Tuning
    -------------------------------------------------------------------------- */
-
-const ASSETS = {
-  character: 'assets/Snaptic_Model.fbx',
-  idle:      'assets/Idle.fbx',
-  run:       'assets/Running.fbx',
-  jump:      'assets/Jumping.fbx'
-};
 
 const RUN_SPEED  = 4.6;
 const TURN_SPEED = 10;
@@ -110,58 +104,32 @@ const netStatus   = el('netstatus');
 
 async function loadAssets() {
   const loader = new FBXLoader();
-  const entries = Object.entries(ASSETS);
+  const keys = ['character', 'idle', 'run', 'jump'];
   const out = {};
-  let done = 0;
 
-  for (const [key, path] of entries) {
-    loadText.textContent = `Loading ${key}…`;
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    loadText.textContent = `Unpacking ${key}\u2026`;
 
-    // Probe first, so a failure can say what actually went wrong. FBXLoader
-    // reports every failure identically, which hides the difference between
-    // a missing file, a wrong path and a blocked request.
-    let status = null;
-    try {
-      const probe = await fetch(path, { method: 'HEAD' });
-      status = probe.status;
-    } catch {
-      status = 'network';
-    }
-
-    if (status === 404) {
-      throw new Error(
-        `404 — ${path} is not on the server.\n\n` +
-        `Check that the assets folder was uploaded, and that the filename ` +
-        `matches exactly. Hosting is case-sensitive even when your computer ` +
-        `isn't: Snaptic_Model.fbx and snaptic_model.fbx are different files.`
-      );
-    }
-
-    if (status === 'network') {
-      throw new Error(
-        `Could not reach ${path}.\n\n` +
-        `If you opened this file directly from your computer, serve the ` +
-        `folder instead:\n\n    python3 -m http.server 8000\n\n` +
-        `then visit http://localhost:8000`
-      );
-    }
+    // Yield to the browser between models so the progress bar can actually
+    // paint — parsing is synchronous and would otherwise freeze the screen.
+    await new Promise(r => setTimeout(r, 0));
 
     let obj;
     try {
-      obj = await loader.loadAsync(path);
+      obj = loader.parse(toBuffer(MODELS[key]), '');
     } catch (e) {
-      throw new Error(`${path} loaded (HTTP ${status}) but could not be parsed as FBX.`);
+      throw new Error(`Could not parse the embedded ${key} model.\n\n${e.message}`);
     }
 
     if (key === 'character') {
       out.character = obj;
     } else {
-      if (!obj.animations.length) throw new Error(`${path} contains no animation.`);
+      if (!obj.animations.length) throw new Error(`Embedded ${key} model has no animation.`);
       out[key] = lockRootMotion(obj.animations[0]);
     }
 
-    done++;
-    barFill.style.width = Math.round((done / entries.length) * 100) + '%';
+    barFill.style.width = Math.round(((i + 1) / keys.length) * 100) + '%';
   }
 
   return out;
