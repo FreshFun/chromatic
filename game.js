@@ -52,7 +52,7 @@ const SILVER_ENV   = 1.6;
 const CAM_DISTANCE = 5.6;
 const CAM_HEIGHT   = 1.35;
 const CAM_SMOOTH   = 10;    // how quickly the camera follows the character
-const LOOK_SMOOTH  = 16;    // how quickly the view settles onto your input
+const LOOK_SMOOTH  = 13;    // how quickly the view settles onto your input
 
 const MOUSE_SENS = 0.0014;
 const TOUCH_SENS = 0.0030;
@@ -568,7 +568,24 @@ function bindInput() {
   // sticks on and the character walks off by itself.
   addEventListener('blur', () => keys.clear());
 
-  const requestLock = () => renderer.domElement.requestPointerLock();
+  /* Pointer lock has two long-standing quirks that both read as the view
+     lurching. First, movementX/Y normally arrive with the operating system's
+     mouse acceleration already applied, so a quick flick travels much further
+     than a slow one covering the same distance. unadjustedMovement asks for
+     raw device deltas instead. Second, browsers occasionally emit one
+     enormous bogus delta — right after the lock engages, and sometimes when
+     the pointer wraps the screen edge — so anything implausible is dropped
+     rather than smoothed, because smoothing a spike just spreads it out. */
+  const MAX_STEP = 110;
+  let ignoreNextMove = false;
+
+  const requestLock = async () => {
+    try {
+      await renderer.domElement.requestPointerLock({ unadjustedMovement: true });
+    } catch {
+      renderer.domElement.requestPointerLock();   // older browsers
+    }
+  };
 
   // Pointer lock is a desktop idea; on a phone the game just starts.
   if (!IS_TOUCH) {
@@ -578,17 +595,27 @@ function bindInput() {
     document.addEventListener('pointerlockchange', () => {
       pointerLocked = document.pointerLockElement === renderer.domElement;
       clickLayer.classList.toggle('hidden', pointerLocked);
-      if (!pointerLocked) keys.clear();
+      if (pointerLocked) ignoreNextMove = true;
+      else keys.clear();
     });
   }
 
   addEventListener('mousemove', e => {
     if (!pointerLocked) return;
-    yawTarget -= e.movementX * MOUSE_SENS;
+
+    // The first event after locking carries the jump from wherever the
+    // cursor happened to be sitting.
+    if (ignoreNextMove) { ignoreNextMove = false; return; }
+
+    const mx = e.movementX, my = e.movementY;
+    if (!Number.isFinite(mx) || !Number.isFinite(my)) return;
+    if (Math.abs(mx) > MAX_STEP || Math.abs(my) > MAX_STEP) return;
+
+    yawTarget -= mx * MOUSE_SENS;
 
     // Plus, not minus. Pushing the mouse forward should raise your view, and
     // the sign was backwards, which is why it felt inverted.
-    pitchTarget += e.movementY * MOUSE_SENS;
+    pitchTarget += my * MOUSE_SENS;
     pitchTarget = Math.max(PITCH_MIN, Math.min(PITCH_MAX, pitchTarget));
   });
 
