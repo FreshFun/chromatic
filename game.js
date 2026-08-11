@@ -62,7 +62,8 @@ const SILVER_ENV   = 2.0;
 
 const CAM_DISTANCE = 6.1;
 const CAM_HEIGHT   = 1.35;
-const CAM_SMOOTH   = 11;    // how quickly the camera follows the character
+/* No follow smoothing constant: the camera is rigidly locked to the
+   character, which is the only way to guarantee zero induced motion. */
 /* Look smoothing is off: the view maps 1:1 to the mouse, with no easing
    between where you point and where the camera ends up. Set LOOK_SMOOTHING
    to true to bring the damping back. */
@@ -235,7 +236,7 @@ function buildScene() {
   sun.position.set(12, 20, 8);
   sun.castShadow = true;
   sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
-  const s = 25;
+  const s = 30;
   Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 70 });
   sun.shadow.camera.updateProjectionMatrix();
   sun.shadow.bias = -0.0006;
@@ -584,20 +585,20 @@ function stepCamera(dt) {
     pitch = pitchTarget;
   }
 
-  // Follow the character's ground position, lagging slightly. Height tracks a
-  // separate anchor that freezes mid-air, so jumping never moves the view.
-  const kP = 1 - Math.exp(-CAM_SMOOTH * dt);
+  // Rigid follow. Any easing here means the character drifts around the frame
+  // as it accelerates and stops, which at low render resolution reads as the
+  // whole view juddering.
+  followPos.set(p.x, 0, p.z);
+
+  // Height is a separate anchor that freezes mid-air, so jumping moves the
+  // character up through frame without moving the camera at all.
   const anchorRate = local.grounded ? 12 : 0;
   camAnchorY += (p.y - camAnchorY) * (1 - Math.exp(-anchorRate * dt));
 
   if (!camReady) {
-    followPos.set(p.x, 0, p.z);
     camAnchorY = p.y;
     camReady = true;
   }
-
-  followPos.x += (p.x - followPos.x) * kP;
-  followPos.z += (p.z - followPos.z) * kP;
 
   // The orbit offset is applied rigidly on top of the followed point. Damping
   // the final camera position instead is what used to make the character
@@ -626,10 +627,18 @@ function tick() {
   for (const avatar of remotes.values()) avatar.stepRemote(dt);
   stepCamera(dt);
 
-  // Keep the sun near the player so shadows don't fall outside its frustum.
-  const p = local.group.position;
-  sun.position.set(p.x + 12, 20, p.z + 8);
-  sun.target.position.copy(p);
+  /* The shadow camera moves with the player, and moving it by fractions of a
+     unit each frame makes every shadow edge crawl and fizz — easily mistaken
+     for the camera itself shaking. Snapping it to a coarse grid means it only
+     jumps occasionally, and always by a whole number of shadow texels, so the
+     shadow stays perfectly still in between. */
+  const pp = local.group.position;
+  const snap = 4;
+  const sx = Math.round(pp.x / snap) * snap;
+  const sz = Math.round(pp.z / snap) * snap;
+
+  sun.position.set(sx + 12, 20, sz + 8);
+  sun.target.position.set(sx, 0, sz);
   sun.target.updateMatrixWorld();
 
   stepNetwork(dt);
