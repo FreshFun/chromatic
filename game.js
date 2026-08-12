@@ -216,8 +216,9 @@ const STICK_RADIUS = 50;
 const stick = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
 const look  = { id: null, lx: 0, ly: 0 };
 
-// Camera follows the character directly, live height included.
+// Camera follows a ground anchor, never the character's live height.
 const followPos = new THREE.Vector3();
+let camAnchorY = 0, camReady = false;
 
 // Networking
 let peer = null, isHost = false, roomCode = null, myId = null, myName = 'anon';
@@ -1233,9 +1234,9 @@ function stepLocal(dt) {
 
 /* --------------------------------------------------------------------------
    Camera
-   Orientation comes straight from the mouse angles rather than from looking at
-   a smoothed point, and the follow point is the character itself, height
-   included, so the view rises with a jump.
+   No shake by construction: orientation comes straight from the mouse angles
+   rather than from looking at a smoothed point, and height tracks a ground
+   anchor rather than the character, so jumping cannot move the view.
    -------------------------------------------------------------------------- */
 
 function stepCamera(dt) {
@@ -1255,7 +1256,17 @@ function stepCamera(dt) {
   // Rigid follow. Any easing here means the character drifts around the frame
   // as it accelerates and stops, which at low render resolution reads as the
   // whole view juddering.
-  followPos.set(p.x, p.y, p.z);
+  followPos.set(p.x, 0, p.z);
+
+  // Height is a separate anchor that freezes mid-air, so jumping moves the
+  // character up through frame without moving the camera at all.
+  const anchorRate = local.grounded ? 12 : 0;
+  camAnchorY += (p.y - camAnchorY) * (1 - Math.exp(-anchorRate * dt));
+
+  if (!camReady) {
+    camAnchorY = p.y;
+    camReady = true;
+  }
 
   // The orbit offset is applied rigidly on top of the followed point. Damping
   // the final camera position instead is what used to make the character
@@ -1264,7 +1275,7 @@ function stepCamera(dt) {
 
   camera.position.set(
     followPos.x - Math.sin(yaw) * flat,
-    followPos.y + CAM_HEIGHT + Math.sin(pitch) * CAM_DISTANCE,
+    camAnchorY + CAM_HEIGHT + Math.sin(pitch) * CAM_DISTANCE,
     followPos.z - Math.cos(yaw) * flat
   );
 
@@ -2101,6 +2112,7 @@ function leaveGame() {
   if (renderer) renderer.setAnimationLoop(null);
 
   // Reset per-session state so a second visit doesn't inherit the first.
+  camReady = false;
   keys.clear();
   stick.id = null;
   stick.x = stick.y = 0;
@@ -2171,13 +2183,6 @@ function setTypingState(on) {
 let chatIdle = null;
 let chatText = '';      // the single source of truth for what is being typed
 
-/* A brief deaf spot after the bar closes. Belt and braces alongside the
-   stopPropagation in onChatKey: it also swallows the key repeat from an Enter
-   that is held down a beat too long, so finishing a message always leaves the
-   bar shut until Enter is pressed again as a fresh press. */
-let chatBlockUntil = 0;
-const CHAT_REOPEN_BLOCK = 150;   // ms
-
 /* The bar closes itself after a stretch of silence, so an abandoned compose
    box doesn't sit over the game forever. Every keystroke pushes it back. */
 function touchChatIdle() {
@@ -2225,21 +2230,15 @@ function onChatKey(e) {
   // Leave browser and OS shortcuts alone.
   if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-  /* Propagation is stopped, not just the default action. Enter is also the key
-     that opens the bar, and this listener runs in the capture phase — so
-     without this the one press would send the message, close the bar, and then
-     still reach the opener on the way back up, reopening an empty box in the
-     same tick. It looked like the bar never closed at all. */
-  if (e.key === 'Enter')     { e.preventDefault(); e.stopPropagation(); sendChat();  return; }
-  if (e.key === 'Escape')    { e.preventDefault(); e.stopPropagation(); closeChat(); return; }
-  if (e.key === 'Backspace') { e.preventDefault(); e.stopPropagation(); setChatText(chatText.slice(0, -1)); return; }
+  if (e.key === 'Enter')     { e.preventDefault(); sendChat();  return; }
+  if (e.key === 'Escape')    { e.preventDefault(); closeChat(); return; }
+  if (e.key === 'Backspace') { e.preventDefault(); setChatText(chatText.slice(0, -1)); return; }
 
   /* Every printable character reports a single-character key, including the
      space bar and anything an international layout produces. Arrows, function
      keys, Shift and the rest report longer names and are ignored. */
   if (e.key.length === 1) {
     e.preventDefault();
-    e.stopPropagation();
     setChatText(chatText + e.key);
   }
 }
@@ -2279,7 +2278,6 @@ function openChat() {
 function closeChat() {
   if (!chatOpen) return;
   chatOpen = false;
-  chatBlockUntil = performance.now() + CHAT_REOPEN_BLOCK;
   clearTimeout(chatIdle);
   setTypingState(false);
 
@@ -2389,14 +2387,17 @@ function bindChat() {
 
   el('btn-chat').addEventListener('click', e => { e.preventDefault(); openChat(); });
 
-  /* T or Enter opens chat while playing. The activeElement check keeps either
-     from firing while the player is typing their name on the title screen. */
+  /* T, and only T, opens chat while playing. Enter deliberately does not: the
+     capture-phase handler above sends on Enter and closes the bar, and this
+     listener runs afterwards on the very same event, so an Enter opener would
+     see chatOpen already false and immediately reopen the box the player just
+     sent from. Sending now ends the exchange — press T again to type again.
+     The activeElement check keeps T from firing while the player is typing
+     their name on the title screen. */
   addEventListener('keydown', e => {
     if (chatOpen || !local) return;
-    if (e.repeat) return;                          // a held key is not a new press
-    if (performance.now() < chatBlockUntil) return;
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
-    if (e.code === 'KeyT' || e.key === 'Enter') { e.preventDefault(); openChat(); }
+    if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
   });
 
   /* On a phone the keyboard covers the bottom of the screen, including the bar
