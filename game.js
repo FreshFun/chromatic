@@ -216,9 +216,8 @@ const STICK_RADIUS = 50;
 const stick = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
 const look  = { id: null, lx: 0, ly: 0 };
 
-// Camera follows a ground anchor, never the character's live height.
+// Camera follows the character directly, live height included.
 const followPos = new THREE.Vector3();
-let camAnchorY = 0, camReady = false;
 
 // Networking
 let peer = null, isHost = false, roomCode = null, myId = null, myName = 'anon';
@@ -1234,9 +1233,9 @@ function stepLocal(dt) {
 
 /* --------------------------------------------------------------------------
    Camera
-   No shake by construction: orientation comes straight from the mouse angles
-   rather than from looking at a smoothed point, and height tracks a ground
-   anchor rather than the character, so jumping cannot move the view.
+   Orientation comes straight from the mouse angles rather than from looking at
+   a smoothed point, and the follow point is the character itself, height
+   included, so the view rises with a jump.
    -------------------------------------------------------------------------- */
 
 function stepCamera(dt) {
@@ -1256,17 +1255,7 @@ function stepCamera(dt) {
   // Rigid follow. Any easing here means the character drifts around the frame
   // as it accelerates and stops, which at low render resolution reads as the
   // whole view juddering.
-  followPos.set(p.x, 0, p.z);
-
-  // Height is a separate anchor that freezes mid-air, so jumping moves the
-  // character up through frame without moving the camera at all.
-  const anchorRate = local.grounded ? 12 : 0;
-  camAnchorY += (p.y - camAnchorY) * (1 - Math.exp(-anchorRate * dt));
-
-  if (!camReady) {
-    camAnchorY = p.y;
-    camReady = true;
-  }
+  followPos.set(p.x, p.y, p.z);
 
   // The orbit offset is applied rigidly on top of the followed point. Damping
   // the final camera position instead is what used to make the character
@@ -1275,7 +1264,7 @@ function stepCamera(dt) {
 
   camera.position.set(
     followPos.x - Math.sin(yaw) * flat,
-    camAnchorY + CAM_HEIGHT + Math.sin(pitch) * CAM_DISTANCE,
+    followPos.y + CAM_HEIGHT + Math.sin(pitch) * CAM_DISTANCE,
     followPos.z - Math.cos(yaw) * flat
   );
 
@@ -2112,7 +2101,6 @@ function leaveGame() {
   if (renderer) renderer.setAnimationLoop(null);
 
   // Reset per-session state so a second visit doesn't inherit the first.
-  camReady = false;
   keys.clear();
   stick.id = null;
   stick.x = stick.y = 0;
