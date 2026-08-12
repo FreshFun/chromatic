@@ -13,7 +13,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v25 bubble stack';
+const BUILD = 'v26 dom bubbles';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -64,10 +64,12 @@ const JUMP_SPEED     = -GRAVITY * AIR_TIME / 2;
 const JUMP_FADE_IN  = 20;
 const JUMP_FADE_OUT = 7;
 
-/* Look. PIXEL_SIZE 2 rather than 3: the reference keeps a visible grid but
-   the blocks are small enough that curved edges still read as curves. Set to
-   1 for a clean render with no pixelation at all. */
-const PIXEL_SIZE = 2;
+/* Look. PIXEL_SIZE 3 gives a chunkier grid than 2 — blocky enough to read as
+   deliberately low-res while curved edges still hold their shape. This used
+   to be capped by legibility, since speech bubbles were sprites living inside
+   this same buffer; now that chat is DOM, the world is free to get as coarse
+   as it likes. Set to 1 for a clean render with no pixelation at all. */
+const PIXEL_SIZE = 3;
 
 /* Skins. Colour alone isn't enough to make a tinted metal read correctly:
    a fully metallic surface shows almost nothing but its reflections, so a red
@@ -124,6 +126,7 @@ const CHAT_LIFETIME = 6500;   // how long a bubble stays up, in ms
 const CHAT_COOLDOWN = 1200;   // minimum gap between messages, in ms
 const CHAT_IDLE     = 10000;  // compose bar closes itself after this silence
 const BUBBLE_GAP    = 0.42;   // how far the bubble floats above the name tag
+const BUBBLE_STACK  = 4;      // messages kept on screen before the top one drops
 const TAG_FADE_NEAR = 3.0;    // full opacity closer than this
 const TAG_FADE_FAR  = 34;     // fully faded beyond this
 
@@ -416,288 +419,56 @@ function applyResolution() {
    and filtered with NearestFilter so nothing is ever smoothed.
    -------------------------------------------------------------------------- */
 
-const BUBBLE_BLUE   = '#0a84ff';
-const BUBBLE_GREY   = '#3a3f47';
-const BUBBLE_TEXT   = '#ffffff';
-const BUBBLE_PAD_X  = 9;
-const BUBBLE_PAD_Y  = 7;
-const BUBBLE_RADIUS = 9;
-const BUBBLE_TAIL   = 7;
-const BUBBLE_FONT   = 'bold 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
-const BUBBLE_LINE   = 15;
-const BUBBLE_WRAP   = 220;     // max text width in canvas pixels
-const BUBBLE_LINES  = 8;       // enough rows to hold a full 150-character message
-const BUBBLE_STACK  = 4;       // how many messages a bubble holds before the top drops
-const BUBBLE_STACK_GAP = 0.045;// world-unit breathing room between stacked bubbles
-const BUBBLE_SCALE  = 0.0095;  // canvas pixels to world units
 
-/* Slack on every side of the canvas. Without it the tail tip lands on exactly
-   the last row of pixels and gets shaved off, and anything that hangs left of
-   the body has nowhere to go at all. The sprite anchor is corrected for this
-   below, so adding margin moves nothing on screen — it only stops clipping. */
-const BUBBLE_MARGIN = 4;
+/* --------------------------------------------------------------------------
+   Speech bubbles
 
-/* The scene renders at half resolution, so a bubble sized in world units gets
-   *minified* on its way to the screen: a texture around 200px wide lands on
-   perhaps 60 buffer pixels. Sampling that 1:1 with a nearest filter throws
-   away two of every three columns, and since the bubble resizes with each
-   character typed, a different set of columns survives every keystroke. That
-   is what made the text appear to stretch and crawl as it was typed.
+   Real DOM on the CSS2D layer, not a canvas sprite in the world.
 
-   The canvas is drawn at this multiple instead and filtered down properly, so
-   the glyphs stay put. Drawing coordinates below are unchanged — the context
-   is scaled once, and the sprite still sizes itself from the logical
-   dimensions, so this is purely a sampling fix. */
-const BUBBLE_SS = 3;
+   The earlier version drew to a texture and showed it as a sprite, on the
+   argument that a bubble living outside the low-resolution buffer would look
+   pasted on. That argument loses to legibility. A sprite is composited into
+   the same buffer as everything else and then scaled up with nearest
+   filtering, so its text can never be sharper than the buffer — at
+   PIXEL_SIZE 3 a 12px glyph gets four pixels of height to work with and
+   stops being readable. No amount of texture resolution helps, because the
+   ceiling is the buffer, not the texture.
 
-/** Rounded rectangle path, since older canvas builds lack roundRect. */
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
-}
+   Moving to DOM lifts that ceiling entirely and decouples the two knobs: the
+   world can get as chunky as you like without touching the chat. The name
+   tags already work this way for exactly the same reason.
 
-function wrapText(ctx, text, maxWidth) {
-  ctx.font = BUBBLE_FONT;
-  const words = text.split(/\s+/);
-  const lines = [];
-  let line = '';
-
-  for (const word of words) {
-    const test = line ? line + ' ' + word : word;
-
-    if (ctx.measureText(test).width <= maxWidth) {
-      line = test;
-      continue;
-    }
-
-    if (line) lines.push(line);
-
-    // A single word too long to fit is broken by character rather than
-    // allowed to overflow the bubble.
-    if (ctx.measureText(word).width <= maxWidth) {
-      line = word;
-    } else {
-      let chunk = '';
-      for (const ch of word) {
-        if (ctx.measureText(chunk + ch).width > maxWidth) {
-          lines.push(chunk);
-          chunk = ch;
-        } else {
-          chunk += ch;
-        }
-      }
-      line = chunk;
-    }
-  }
-
-  if (line) lines.push(line);
-
-  // A message longer than the bubble can hold is marked as cut rather than
-  // quietly losing its tail, so the reader knows to ask.
-  if (lines.length > BUBBLE_LINES) {
-    const kept = lines.slice(0, BUBBLE_LINES);
-    kept[BUBBLE_LINES - 1] = kept[BUBBLE_LINES - 1].replace(/.$/, '…');
-    return kept;
-  }
-
-  return lines;
-}
-
-/**
- * One sprite, one message, drawn exactly once at construction.
- *
- * The previous version reused a single sprite and resized its canvas every
- * time the text changed. That is what produced the stretched bubble showing
- * the old message: a CanvasTexture whose backing canvas changes dimensions
- * keeps the texture object three already uploaded, so the sprite quad took
- * the new size while the pixels stayed stale. Nothing here ever resizes a
- * canvas after upload, which sidesteps the problem entirely and makes the
- * stack trivial — each message is just its own object with its own height.
- */
-class Bubble {
-  constructor(parent, mode, text) {
-    this.mode = mode;            // 'text' | 'typing'
-    this.text = text || '';
-    this.phase = 0;
-    this.clock = 0;
-
-    // Text bubbles age out on their own clock. The dots stay until the
-    // composer stops typing.
-    this.expires = mode === 'text' ? performance.now() + CHAT_LIFETIME : Infinity;
-
-    this.canvas = document.createElement('canvas');
-    this.ctx = this.canvas.getContext('2d');
-
-    this.texture = new THREE.CanvasTexture(this.canvas);
-
-    /* Nearest filtering is right for the world, which is authored at the
-       buffer's own resolution. It is wrong for the bubble, which is drawn
-       larger than it lands and therefore needs minification rather than
-       magnification. Mipmaps give the downscale something stable to sample. */
-    this.texture.magFilter = THREE.LinearFilter;
-
-    /* Mipmaps on a non-power-of-two texture are only legal under WebGL2. On a
-       WebGL1 fallback asking for them yields a black sprite, so drop to a
-       plain linear minify there — still stable, just slightly softer. */
-    const gl2 = renderer && renderer.capabilities.isWebGL2;
-    this.texture.minFilter = gl2
-      ? THREE.LinearMipmapLinearFilter
-      : THREE.LinearFilter;
-    this.texture.generateMipmaps = !!gl2;
-    this.texture.anisotropy = renderer
-      ? renderer.capabilities.getMaxAnisotropy()
-      : 1;
-
-    this.material = new THREE.SpriteMaterial({
-      map: this.texture,
-      transparent: true,
-      depthTest: false,      // never buried inside the character's own head
-      depthWrite: false
-    });
-
-    this.sprite = new THREE.Sprite(this.material);
-    this.sprite.renderOrder = 10;
-    this.sprite.center.set(0.5, 0);   // replaced by draw(), which knows the height
-
-    /* How far the drawn body reaches above the anchor, in world units. The
-       stack uses this to park the next bubble up clear of this one. */
-    this.contentTop = 0;
-
-    this.draw();
-    parent.add(this.sprite);
-  }
-
-  /** Only the dots ever change after construction, and never in size. */
-  update(dt) {
-    if (this.mode !== 'typing') return;
-
-    this.clock += dt;
-    if (this.clock < 0.22) return;
-
-    this.clock = 0;
-    this.phase = (this.phase + 1) % 4;
-    this.draw();
-  }
-
-  draw() {
-    const ctx = this.ctx;
-    ctx.font = BUBBLE_FONT;
-
-    let w, h, lines = null;
-
-    if (this.mode === 'typing') {
-      w = 46;
-      h = 26;
-    } else {
-      lines = wrapText(ctx, this.text, BUBBLE_WRAP);
-      let widest = 0;
-      for (const l of lines) widest = Math.max(widest, ctx.measureText(l).width);
-      w = Math.ceil(widest) + BUBBLE_PAD_X * 2;
-      h = lines.length * BUBBLE_LINE + BUBBLE_PAD_Y * 2;
-    }
-
-    const M = BUBBLE_MARGIN;
-
-    // Logical size: what the bubble measures in world terms. The backing store
-    // is BUBBLE_SS times larger in each axis, but nothing below needs to know.
-    const cw = w + M * 2;
-    const ch = h + BUBBLE_TAIL + M * 2;
-
-    // Assigning width/height clears the canvas, so it is also the wipe. Guard
-    // it anyway: the typing redraw runs several times a second at a fixed size
-    // and there is no reason to reallocate the backing store for it.
-    if (this.canvas.width !== cw * BUBBLE_SS || this.canvas.height !== ch * BUBBLE_SS) {
-      this.canvas.width = cw * BUBBLE_SS;
-      this.canvas.height = ch * BUBBLE_SS;
-    } else {
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    }
-
-    // Resizing a canvas resets its context, so the transform has to come after
-    // the assignments above. setTransform applies the supersample scale and
-    // the margin offset in one step; everything below then draws in
-    // bubble-local coordinates and lands inside the padding.
-    ctx.setTransform(BUBBLE_SS, 0, 0, BUBBLE_SS, M * BUBBLE_SS, M * BUBBLE_SS);
-    ctx.font = BUBBLE_FONT;
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'center';
-
-    const fill = this.mode === 'typing' ? BUBBLE_GREY : BUBBLE_BLUE;
-
-    // Body.
-    ctx.fillStyle = fill;
-    roundRect(ctx, 0, 0, w, h, BUBBLE_RADIUS);
-    ctx.fill();
-
-    // Tail, pointing down at the character.
-    ctx.beginPath();
-    ctx.moveTo(w / 2 - BUBBLE_TAIL, h - 1);
-    ctx.lineTo(w / 2, h + BUBBLE_TAIL);
-    ctx.lineTo(w / 2 + BUBBLE_TAIL, h - 1);
-    ctx.closePath();
-    ctx.fill();
-
-    if (this.mode === 'typing') {
-      // Three dots, one lifting at a time.
-      const cx = w / 2;
-      const cy = h / 2;
-      for (let i = 0; i < 3; i++) {
-        const lift = this.phase === i ? -2 : 0;
-        ctx.globalAlpha = this.phase === i ? 1 : 0.55;
-        ctx.fillStyle = BUBBLE_TEXT;
-        ctx.beginPath();
-        ctx.arc(cx + (i - 1) * 11, cy + lift, 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-    } else {
-      ctx.fillStyle = BUBBLE_TEXT;
-      lines.forEach((line, i) => {
-        ctx.fillText(line, w / 2, BUBBLE_PAD_Y + BUBBLE_LINE * i + BUBBLE_LINE / 2);
-      });
-    }
-
-    this.texture.needsUpdate = true;
-    this.sprite.scale.set(cw * BUBBLE_SCALE, ch * BUBBLE_SCALE, 1);
-
-    // The anchor tracks the tail tip, which sits BUBBLE_MARGIN above the
-    // bottom edge rather than on it.
-    this.sprite.center.set(0.5, M / ch);
-
-    // Anchor to the top of the drawn body, ignoring the transparent margin.
-    this.contentTop = (ch - M * 2) * BUBBLE_SCALE;
-  }
-
-  dispose() {
-    this.sprite.removeFromParent();
-    this.texture.dispose();
-    this.material.dispose();
-  }
-}
+   Layout note. The CSS2DObject's centre is set to (0.5, 1), which pins the
+   bottom edge of the column to the anchor point rather than its middle. New
+   messages are appended last, so they land at the bottom against the head
+   and everything already there is pushed up — the stacking falls out of
+   normal document flow, with no per-bubble positioning maths at all.
+   -------------------------------------------------------------------------- */
 
 /**
  * The column of bubbles over one character.
  *
- * Each message is its own bubble. A new one is placed at the bottom, right
- * above the head, and everything already up there shifts up by exactly the
- * new bubble's height — so the previous message visibly rises and the new one
- * takes its place underneath, rather than one box growing taller.
+ * Each message is its own element with its own expiry, so the column drains
+ * from the top in the order it filled.
  */
 class BubbleStack {
-  constructor(parent) {
-    this.parent = parent;
-    this.list = [];          // oldest first, newest last (= bottom of the column)
-    this.typingBubble = null;
+  constructor(group) {
+    /* Two elements, because CSS2DRenderer overwrites the transform of the
+       element it owns every frame. The outer one is the renderer's; the inner
+       one is ours to scale for the distance falloff. */
+    this.root = document.createElement('div');
+    this.root.className = 'bubble-anchor';
+
+    this.col = document.createElement('div');
+    this.col.className = 'bubble-col';
+    this.root.appendChild(this.col);
+
+    this.object = new CSS2DObject(this.root);
+    this.object.center.set(0.5, 1);   // anchor the bottom edge, not the middle
+    group.add(this.object);
+
+    this.list = [];          // [{ el, expires }] oldest first
+    this.typingEl = null;
     this.baseY = 0;
   }
 
@@ -705,70 +476,71 @@ class BubbleStack {
     // A real message outranks the dots.
     this.clearTyping();
 
-    this.list.push(new Bubble(this.parent, 'text', text));
+    const el = document.createElement('div');
+    el.className = 'bubble';
+    el.textContent = text;
 
-    // Past the cap the top bubble goes immediately, so the column never runs
-    // off the top of the screen no matter how fast someone talks.
-    while (this.list.length > BUBBLE_STACK) this.list.shift().dispose();
+    // Appended last, so it renders at the bottom of the column.
+    this.col.appendChild(el);
+    this.list.push({ el, expires: performance.now() + CHAT_LIFETIME });
 
-    this.layout();
+    // Past the cap the top one goes immediately, so the column never runs off
+    // the top of the screen no matter how fast someone talks.
+    while (this.list.length > BUBBLE_STACK) this.list.shift().el.remove();
   }
 
   setTyping(on) {
     if (!on) { this.clearTyping(); return; }
-    if (this.typingBubble || this.list.length) return;
+    if (this.typingEl || this.list.length) return;
 
-    this.typingBubble = new Bubble(this.parent, 'typing');
-    this.layout();
+    const el = document.createElement('div');
+    el.className = 'bubble typing';
+    el.innerHTML = '<i></i><i></i><i></i>';
+
+    this.col.appendChild(el);
+    this.typingEl = el;
   }
 
   clearTyping() {
-    if (!this.typingBubble) return;
-    this.typingBubble.dispose();
-    this.typingBubble = null;
+    if (!this.typingEl) return;
+    this.typingEl.remove();
+    this.typingEl = null;
   }
 
-  /** Retires expired bubbles and animates the dots. */
-  update(dt) {
+  /** Retires expired bubbles. The dots animate in CSS and need nothing here. */
+  update() {
     const now = performance.now();
-    let changed = false;
 
-    // Oldest first, so the column drains from the top in the order it filled.
+    // Oldest first, so the column drains from the top downward.
     while (this.list.length && this.list[0].expires <= now) {
-      this.list.shift().dispose();
-      changed = true;
+      this.list.shift().el.remove();
     }
-
-    if (this.typingBubble) this.typingBubble.update(dt);
-    if (changed) this.layout();
   }
 
   setBaseY(y) {
     if (y === this.baseY) return;
     this.baseY = y;
-    this.layout();
+    this.object.position.y = y;
   }
 
-  /** Bottom-up: newest sits on the base, each older one stacked on top of it. */
-  layout() {
-    let y = this.baseY;
+  /**
+   * Fade and shrink with distance. CSS2D elements do not shrink with
+   * perspective, so without this a bubble across the map stays full size and
+   * ends up bigger on screen than the player who said it.
+   */
+  setFalloff(t) {
+    const opacity = 1 - t * 0.75;
+    const scale = 1 - t * 0.3;
 
-    if (this.typingBubble) {
-      this.typingBubble.sprite.position.y = y;
-      return;
-    }
-
-    for (let i = this.list.length - 1; i >= 0; i--) {
-      const b = this.list[i];
-      b.sprite.position.y = y;
-      y += b.contentTop + BUBBLE_STACK_GAP;
-    }
+    this.col.style.opacity = opacity.toFixed(2);
+    this.col.style.transform = `scale(${scale.toFixed(2)})`;
   }
 
   dispose() {
-    for (const b of this.list) b.dispose();
+    this.root.remove();
+    this.object.removeFromParent();
     this.list.length = 0;
-    this.clearTyping();
+    this.typingEl = null;
   }
 }
 
@@ -1003,14 +775,20 @@ class Avatar {
    * so the label glides rather than snapping between frames.
    */
   stepTag(dt) {
-    // The bubble rides above the tag, and needs tracking even for the local
-    // player, who has no name tag at all.
+    // Distance falloff is shared by the tag and the bubble, and the bubble
+    // needs it even for the local player, who has no tag at all.
+    const dist = camera.position.distanceTo(this.group.position);
+    const t = Math.min(1, Math.max(0,
+      (dist - TAG_FADE_NEAR) / (TAG_FADE_FAR - TAG_FADE_NEAR)));
+
+    // The bubble rides above the tag, and needs tracking either way.
     if (this.bubbleObj) {
       // Fixed height, not this.tagY — see HEAD_TOP. A remote player carries a
       // name tag under the bubble, so theirs needs the extra clearance.
       this.bubbleObj.setBaseY(
         HEAD_TOP + (this.tag ? TAG_CLEARANCE + BUBBLE_GAP : BUBBLE_GAP * 0.4));
-      this.bubbleObj.update(dt);
+      this.bubbleObj.update();
+      this.bubbleObj.setFalloff(t);
 
       // Once the last bubble has aged out, fall back to the dots if they have
       // already started composing the next message.
@@ -1043,10 +821,6 @@ class Avatar {
     // Fade with distance. CSS2D labels don't shrink with perspective, so
     // without this a distant player's name stays full size and ends up
     // larger on screen than the character wearing it.
-    const d = camera.position.distanceTo(this.group.position);
-    const t = Math.min(1, Math.max(0,
-      (d - TAG_FADE_NEAR) / (TAG_FADE_FAR - TAG_FADE_NEAR)));
-
     const opacity = 1 - t * 0.82;
     const scale = 1 - t * 0.34;
 

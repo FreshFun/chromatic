@@ -482,6 +482,101 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
   border-radius: 0 0 2px 0;
 }
 
+/* ---------------------------------------------------------------------------
+   Speech bubbles
+
+   These live on the CSS2D layer with the name tags, at full device
+   resolution, so the text stays sharp no matter how coarse PIXEL_SIZE makes
+   the world underneath. Anti-aliasing is the point here — this is the one
+   part of the screen that has to be read rather than looked at.
+   --------------------------------------------------------------------------- */
+
+/* The renderer owns this element's transform, so the scaling for distance
+   falloff is applied to the column inside it instead. */
+.bubble-anchor {
+  pointer-events: none;
+}
+
+.bubble-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transform-origin: 50% 100%;
+  will-change: transform, opacity;
+}
+
+.bubble {
+  position: relative;
+  max-width: 240px;
+  padding: 6px 11px 7px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: .01em;
+  color: #fff;
+  background: #0a84ff;
+  border-radius: 14px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .35);
+
+  /* Long words and pasted URLs would otherwise blow past max-width. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+  text-align: center;
+
+  animation: bubble-in .16s cubic-bezier(.2, .9, .3, 1.4);
+}
+
+/* Only the newest bubble carries the tail, since it is the one sitting
+   against the head. The ones above it have been pushed up and no longer
+   point at anything. */
+.bubble-col > .bubble:last-child::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  margin-left: -6px;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 7px solid #0a84ff;
+}
+
+@keyframes bubble-in {
+  from { opacity: 0; transform: translateY(4px) scale(.9); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Composing indicator. Grey rather than blue, so it reads as not-yet-a-message
+   at a glance. */
+.bubble.typing {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 12px;
+  background: #3a3f47;
+}
+
+.bubble.typing:last-child::after { border-top-color: #3a3f47; }
+
+.bubble.typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: .5;
+  animation: bubble-dot .9s infinite ease-in-out;
+}
+
+.bubble.typing i:nth-child(2) { animation-delay: .15s; }
+.bubble.typing i:nth-child(3) { animation-delay: .3s; }
+
+@keyframes bubble-dot {
+  0%, 60%, 100% { opacity: .45; transform: translateY(0); }
+  30%           { opacity: 1;   transform: translateY(-3px); }
+}
+
 .buildtag {
   margin: 22px 0 0;
   font-size: 9px;
@@ -708,5 +803,10 @@ body.playing {
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
+
+  /* The bubble pop-in is decoration and goes. The typing dots stay: they are
+     the only thing signalling that someone is mid-message, and a static row
+     of grey circles carries none of that. */
+  .bubble { animation: none !important; }
 }
 
