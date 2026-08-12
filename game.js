@@ -13,7 +13,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v27 footsteps';
+const BUILD = 'v28 outline + specular';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -75,19 +75,45 @@ const PIXEL_SIZE = 3;
    a fully metallic surface shows almost nothing but its reflections, so a red
    one just looks like grey with a blush. Each skin therefore carries its own
    metalness, letting the coloured ones keep enough diffuse to actually look
-   red or green while Metal and Gold stay properly reflective. */
+   red or green while Metal and Gold stay properly reflective.
+
+   Roughness is what controls the size of the highlight. These sit low, around
+   0.15, because roughness scatters the reflection: at 0.32 the sun's
+   reflection smeared across half the head as a soft gradient, and only down
+   here does it tighten into the distinct circle it should be. Raise these to
+   soften the highlight, lower them to sharpen it further. */
 const SKINS = [
-  { id: 'metal',   name: 'Metal',   color: 0xa9b1bb, metal: 0.62, rough: 0.34 },
-  { id: 'crimson', name: 'Crimson', color: 0xb42f2f, metal: 0.48, rough: 0.32 },
-  { id: 'cobalt',  name: 'Cobalt',  color: 0x2a55c0, metal: 0.48, rough: 0.32 },
-  { id: 'emerald', name: 'Emerald', color: 0x1d9160, metal: 0.48, rough: 0.32 },
-  { id: 'gold',    name: 'Gold',    color: 0xd8a52c, metal: 0.78, rough: 0.28 },
-  { id: 'dorfic',  name: 'Dorfic',  color: 0xdc6a24, metal: 0.50, rough: 0.32 }
+  { id: 'metal',   name: 'Metal',   color: 0xa9b1bb, metal: 0.62, rough: 0.16 },
+  { id: 'crimson', name: 'Crimson', color: 0xb42f2f, metal: 0.48, rough: 0.15 },
+  { id: 'cobalt',  name: 'Cobalt',  color: 0x2a55c0, metal: 0.48, rough: 0.15 },
+  { id: 'emerald', name: 'Emerald', color: 0x1d9160, metal: 0.48, rough: 0.15 },
+  { id: 'gold',    name: 'Gold',    color: 0xd8a52c, metal: 0.78, rough: 0.14 },
+  { id: 'dorfic',  name: 'Dorfic',  color: 0xdc6a24, metal: 0.50, rough: 0.15 }
 ];
 
-/* How strongly the environment reflects off every skin. This is the global
-   shine dial — raise for glossier, lower for flatter. */
-const ENV_INTENSITY = 1.45;
+/* How strongly the environment reflects off every skin.
+
+   Deliberately low. RoomEnvironment is a big soft box of light, and leaning
+   on it is what produced the smooth head-to-toe gradient with no highlight
+   anywhere in particular — a broad source spreads its reflection over the
+   whole surface. Most of the shine now comes from the sun instead, which is
+   effectively a point and therefore leaves a small round highlight where it
+   catches the curve of the head. Raise this for a softer, more ambient look;
+   lower it for harder contrast. */
+const ENV_INTENSITY = 0.5;
+
+/* Silhouette. Drawn as an inverted hull: a second copy of the model with its
+   faces flipped and its vertices pushed out along their normals, so it is
+   hidden behind the real model everywhere except around the edge. Cheap, and
+   unlike a post-process edge filter it survives being rendered into a
+   quarter-resolution buffer without breaking up.
+
+   Width is in world units and gets divided by the model's own scale before
+   it reaches the shader. Too wide and it stops reading as a line and starts
+   looking like a shadow; past about 0.05 it also starts to separate at sharp
+   creases like the armpits. */
+const OUTLINE_WIDTH = 0.022;
+const OUTLINE_COLOR = 0x141a20;
 
 let mySkin = 0;
 
@@ -351,9 +377,17 @@ function buildScene() {
   camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 500);
   camera.rotation.order = 'YXZ';
 
-  scene.add(new THREE.HemisphereLight(0xe4eefb, 0x7a7466, 1.2));
+  /* Ambient fill, kept low. A bright hemisphere lights every surface from
+     every direction at once, which is exactly what washes a highlight out —
+     it raises the floor until the bright spot has nothing to be bright
+     against. */
+  scene.add(new THREE.HemisphereLight(0xe4eefb, 0x7a7466, 0.55));
 
-  sun = new THREE.DirectionalLight(0xfff4e2, 2.4);
+  /* The sun does most of the work now, and it is the thing making the round
+     highlight on the head. A directional light is a single direction, so on
+     a low-roughness curved surface its reflection is a small disc rather
+     than a spread. */
+  sun = new THREE.DirectionalLight(0xfff4e2, 3.4);
   sun.position.set(12, 20, 8);
   sun.castShadow = true;
   sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
@@ -366,7 +400,7 @@ function buildScene() {
   /* A dim cool light from behind and to the side. On a metal surface this is
      what draws the bright edge down the shoulders and arms — the detail that
      separates polished metal from a flat grey shape. */
-  const rim = new THREE.DirectionalLight(0xbcd4f0, 0.7);
+  const rim = new THREE.DirectionalLight(0xbcd4f0, 1.1);
   rim.position.set(-9, 7, -11);
   scene.add(rim);
 
@@ -793,6 +827,79 @@ const sfx = {
    its position differs.
    -------------------------------------------------------------------------- */
 
+/**
+ * Builds the inverted-hull outline material.
+ *
+ * The push happens on `transformed` immediately after `begin_vertex`, which
+ * is *before* the skinning include runs. That ordering matters: offsetting
+ * first means the skinning transform carries the offset along with the
+ * vertex, so the outline deforms with the animation. Offsetting after
+ * skinning would leave a shell that stayed in the bind pose while the
+ * character moved inside it.
+ *
+ * `normal` is used rather than `objectNormal` because it is declared for
+ * every material, skinned or not, so this works on any mesh in the model.
+ */
+function makeOutlineMaterial(width) {
+  const mat = new THREE.MeshBasicMaterial({
+    color: OUTLINE_COLOR,
+    side: THREE.BackSide,       // only the far faces survive, hence a shell
+    fog: true                   // so distant outlines recede with everything else
+  });
+
+  // Baked in as a literal rather than passed as a uniform: every avatar is
+  // normalised to the same height and therefore the same width, and a literal
+  // keeps the shader free of per-instance state.
+  const w = width.toFixed(6);
+
+  mat.onBeforeCompile = shader => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>\n\ttransformed += normalize( normal ) * ${w};`
+    );
+  };
+
+  // Without this three would reuse the plain MeshBasicMaterial program and
+  // the injection above would silently do nothing.
+  mat.customProgramCacheKey = () => 'outline' + w;
+
+  return mat;
+}
+
+/** Adds a shell sibling for every mesh under `root`. */
+function buildOutline(root, material) {
+  const sources = [];
+  root.traverse(o => { if (o.isMesh || o.isSkinnedMesh) sources.push(o); });
+
+  for (const src of sources) {
+    let shell;
+
+    if (src.isSkinnedMesh) {
+      shell = new THREE.SkinnedMesh(src.geometry, material);
+      shell.bindMode = src.bindMode;
+
+      /* Share the skeleton rather than cloning it. The shell has to be bound
+         with the same matrix as the source, or it animates from a different
+         rest pose and swims around inside the character. */
+      shell.bind(src.skeleton, src.bindMatrix);
+    } else {
+      shell = new THREE.Mesh(src.geometry, material);
+    }
+
+    shell.position.copy(src.position);
+    shell.quaternion.copy(src.quaternion);
+    shell.scale.copy(src.scale);
+
+    // The real mesh already casts the shadow; a second one at the same place
+    // would only thicken and darken it.
+    shell.castShadow = false;
+    shell.receiveShadow = false;
+    shell.frustumCulled = false;
+
+    src.parent.add(shell);
+  }
+}
+
 class Avatar {
   constructor(name, isLocal, skin = 0) {
     this.isLocal = isLocal;
@@ -823,6 +930,13 @@ class Avatar {
     model.scale.setScalar(h > 0.001 ? 1.8 / h : 1);
     const box2 = new THREE.Box3().setFromObject(model);
     model.position.y -= box2.min.y;
+
+    /* After scaling, so the width can be converted into the model's own
+       units. The raw FBX is authored at whatever size the exporter used, and
+       a fixed local-space offset would come out a different thickness for
+       any model of a different scale. */
+    this.outlineMaterial = makeOutlineMaterial(OUTLINE_WIDTH / (model.scale.x || 1));
+    buildOutline(model, this.outlineMaterial);
 
     this.group = new THREE.Group();
     this.group.add(model);
@@ -1118,6 +1232,8 @@ class Avatar {
   dispose() {
     if (this.bubbleObj) this.bubbleObj.dispose();
     if (this.tag) this.tag.element.remove();
+    if (this.outlineMaterial) this.outlineMaterial.dispose();
+    this.material.dispose();
     scene.remove(this.group);
   }
 }
