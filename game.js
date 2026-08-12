@@ -315,6 +315,10 @@ const _eRel = new THREE.Euler(0, 0, 0, 'YXZ');
    through every name test and kept its own clip's offset. */
 const restPos = new Map();
 
+/* The same idea for orientation: where each root bone is *aimed* at rest, so
+   no clip can hold the body at a different angle from the one before it. */
+const restQuat = new Map();
+
 const isRootBone = b => {
   const n = b.toLowerCase();
   return n === 'root' || n === 'armature';
@@ -384,16 +388,42 @@ function lockRootMotion(clip) {
       continue;
     }
 
-    if (!track.name.endsWith('.quaternion') || LIMB.test(bone)) continue;
+    if (!track.name.endsWith('.quaternion')) continue;
 
+    /* The root is tested before the limb guard, not after it. That guard is a
+       substring match, and this rig's travelling node is called "Armature" —
+       which contains "arm". So every root rotation track was being skipped as
+       if it belonged to an arm, and the freeze below never ran on the one bone
+       it exists for. The run clip's baked whole-body swivel, nearly 19° of yaw
+       per stride plus a lean, survived intact and stacked on top of the
+       direction the player was steering: hold a direction and the character
+       veers off it and back once per step. */
     if (isRoot(bone)) {
+      /* Frozen to a shared rest orientation, captured from the first clip
+         processed — idle — and not to each clip's own first frame.
+
+         Its own first frame is not a rest pose. This run clip opens 44° away
+         from where idle holds the same node, because frame one of a run cycle
+         is mid-stride with the body already turned into the step. Freezing
+         each clip to its own gave the character one fixed angle standing still
+         and a different one running, so it snapped to a diagonal the moment it
+         set off and snapped back when it stopped. One orientation for all
+         three clips means the body faces where the group faces, always. */
+      if (!restQuat.has(bone)) restQuat.set(bone, [v[0], v[1], v[2], v[3]]);
+      const [qx, qy, qz, qw] = restQuat.get(bone);
+
       for (let i = 0; i < v.length; i += 4) {
-        v[i]     = v[0];
-        v[i + 1] = v[1];
-        v[i + 2] = v[2];
-        v[i + 3] = v[3];
+        v[i]     = qx;
+        v[i + 1] = qy;
+        v[i + 2] = qz;
+        v[i + 3] = qw;
       }
-    } else if (isHip(bone) && STRIP_HIP_YAW) {
+      continue;
+    }
+
+    if (LIMB.test(bone)) continue;
+
+    if (isHip(bone) && STRIP_HIP_YAW) {
       for (let i = 0; i < v.length; i += 4) {
         _q.set(v[i], v[i + 1], v[i + 2], v[i + 3]);
 
