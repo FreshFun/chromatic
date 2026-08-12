@@ -13,7 +13,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v24 chat stack';
+const BUILD = 'v25 bubble stack';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -428,6 +428,7 @@ const BUBBLE_LINE   = 15;
 const BUBBLE_WRAP   = 220;     // max text width in canvas pixels
 const BUBBLE_LINES  = 8;       // enough rows to hold a full 150-character message
 const BUBBLE_STACK  = 4;       // how many messages a bubble holds before the top drops
+const BUBBLE_STACK_GAP = 0.045;// world-unit breathing room between stacked bubbles
 const BUBBLE_SCALE  = 0.0095;  // canvas pixels to world units
 
 /* Slack on every side of the canvas. Without it the tail tip lands on exactly
@@ -511,8 +512,28 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
+/**
+ * One sprite, one message, drawn exactly once at construction.
+ *
+ * The previous version reused a single sprite and resized its canvas every
+ * time the text changed. That is what produced the stretched bubble showing
+ * the old message: a CanvasTexture whose backing canvas changes dimensions
+ * keeps the texture object three already uploaded, so the sprite quad took
+ * the new size while the pixels stayed stale. Nothing here ever resizes a
+ * canvas after upload, which sidesteps the problem entirely and makes the
+ * stack trivial — each message is just its own object with its own height.
+ */
 class Bubble {
-  constructor(parent) {
+  constructor(parent, mode, text) {
+    this.mode = mode;            // 'text' | 'typing'
+    this.text = text || '';
+    this.phase = 0;
+    this.clock = 0;
+
+    // Text bubbles age out on their own clock. The dots stay until the
+    // composer stops typing.
+    this.expires = mode === 'text' ? performance.now() + CHAT_LIFETIME : Infinity;
+
     this.canvas = document.createElement('canvas');
     this.ctx = this.canvas.getContext('2d');
 
@@ -545,71 +566,18 @@ class Bubble {
 
     this.sprite = new THREE.Sprite(this.material);
     this.sprite.renderOrder = 10;
-    this.sprite.visible = false;
-    this.sprite.center.set(0.5, 0);   // anchor at the tail, so it grows upward
+    this.sprite.center.set(0.5, 0);   // replaced by draw(), which knows the height
 
+    /* How far the drawn body reaches above the anchor, in world units. The
+       stack uses this to park the next bubble up clear of this one. */
+    this.contentTop = 0;
+
+    this.draw();
     parent.add(this.sprite);
-
-    this.mode = null;      // 'text' | 'typing'
-
-    /* A stack rather than a single string. Each entry carries its own expiry,
-       so the oldest line falls off the top while newer ones keep sitting
-       underneath it, and the newest message is always the bottom row. */
-    this.messages = [];    // [{ text, expires }]
-
-    this.phase = 0;
-    this.clock = 0;
   }
 
-  showText(text) {
-    this.mode = 'text';
-    this.messages.push({ text, expires: performance.now() + CHAT_LIFETIME });
-
-    // Past the cap the top line goes immediately, so the bubble never grows
-    // taller than the stack height no matter how fast someone talks.
-    while (this.messages.length > BUBBLE_STACK) this.messages.shift();
-
-    this.draw();
-    this.sprite.visible = true;
-  }
-
-  showTyping() {
-    if (this.mode === 'text') return;   // a real message outranks the dots
-    this.mode = 'typing';
-    this.phase = 0;
-    this.clock = 0;
-    this.draw();
-    this.sprite.visible = true;
-  }
-
-  hide() {
-    this.mode = null;
-    this.messages.length = 0;
-    this.sprite.visible = false;
-  }
-
-  /**
-   * Ages the stack out and advances the typing animation. Expiry is checked
-   * against a timestamp per line rather than by timer, so lines drain from
-   * the top in order however quickly they arrived.
-   */
+  /** Only the dots ever change after construction, and never in size. */
   update(dt) {
-    if (this.mode === 'text') {
-      const now = performance.now();
-      let dropped = false;
-
-      while (this.messages.length && this.messages[0].expires <= now) {
-        this.messages.shift();
-        dropped = true;
-      }
-
-      if (dropped) {
-        if (this.messages.length) this.draw();
-        else this.hide();
-      }
-      return;
-    }
-
     if (this.mode !== 'typing') return;
 
     this.clock += dt;
@@ -630,15 +598,7 @@ class Bubble {
       w = 46;
       h = 26;
     } else {
-      /* Oldest first, so each new message lands under the one before it. A
-         blank row between blocks keeps two short messages from reading as one
-         wrapped sentence. */
-      lines = [];
-      this.messages.forEach((m, i) => {
-        if (i) lines.push('');
-        lines.push(...wrapText(ctx, m.text, BUBBLE_WRAP));
-      });
-
+      lines = wrapText(ctx, this.text, BUBBLE_WRAP);
       let widest = 0;
       for (const l of lines) widest = Math.max(widest, ctx.measureText(l).width);
       w = Math.ceil(widest) + BUBBLE_PAD_X * 2;
@@ -652,10 +612,16 @@ class Bubble {
     const cw = w + M * 2;
     const ch = h + BUBBLE_TAIL + M * 2;
 
-    this.canvas.width = cw * BUBBLE_SS;
-    this.canvas.height = ch * BUBBLE_SS;
-
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    // Assigning width/height clears the canvas, so it is also the wipe. Guard
+    // it anyway: the typing redraw runs several times a second at a fixed size
+    // and there is no reason to reallocate the backing store for it.
+    if (this.canvas.width !== cw * BUBBLE_SS || this.canvas.height !== ch * BUBBLE_SS) {
+      this.canvas.width = cw * BUBBLE_SS;
+      this.canvas.height = ch * BUBBLE_SS;
+    } else {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
 
     // Resizing a canvas resets its context, so the transform has to come after
     // the assignments above. setTransform applies the supersample scale and
@@ -704,16 +670,105 @@ class Bubble {
     this.texture.needsUpdate = true;
     this.sprite.scale.set(cw * BUBBLE_SCALE, ch * BUBBLE_SCALE, 1);
 
-    // The anchor tracks the tail tip, which now sits BUBBLE_MARGIN above the
-    // bottom edge rather than on it. Without this the whole bubble would rise
-    // by the margin every time the canvas grew.
+    // The anchor tracks the tail tip, which sits BUBBLE_MARGIN above the
+    // bottom edge rather than on it.
     this.sprite.center.set(0.5, M / ch);
+
+    // Anchor to the top of the drawn body, ignoring the transparent margin.
+    this.contentTop = (ch - M * 2) * BUBBLE_SCALE;
   }
 
   dispose() {
     this.sprite.removeFromParent();
     this.texture.dispose();
     this.material.dispose();
+  }
+}
+
+/**
+ * The column of bubbles over one character.
+ *
+ * Each message is its own bubble. A new one is placed at the bottom, right
+ * above the head, and everything already up there shifts up by exactly the
+ * new bubble's height — so the previous message visibly rises and the new one
+ * takes its place underneath, rather than one box growing taller.
+ */
+class BubbleStack {
+  constructor(parent) {
+    this.parent = parent;
+    this.list = [];          // oldest first, newest last (= bottom of the column)
+    this.typingBubble = null;
+    this.baseY = 0;
+  }
+
+  push(text) {
+    // A real message outranks the dots.
+    this.clearTyping();
+
+    this.list.push(new Bubble(this.parent, 'text', text));
+
+    // Past the cap the top bubble goes immediately, so the column never runs
+    // off the top of the screen no matter how fast someone talks.
+    while (this.list.length > BUBBLE_STACK) this.list.shift().dispose();
+
+    this.layout();
+  }
+
+  setTyping(on) {
+    if (!on) { this.clearTyping(); return; }
+    if (this.typingBubble || this.list.length) return;
+
+    this.typingBubble = new Bubble(this.parent, 'typing');
+    this.layout();
+  }
+
+  clearTyping() {
+    if (!this.typingBubble) return;
+    this.typingBubble.dispose();
+    this.typingBubble = null;
+  }
+
+  /** Retires expired bubbles and animates the dots. */
+  update(dt) {
+    const now = performance.now();
+    let changed = false;
+
+    // Oldest first, so the column drains from the top in the order it filled.
+    while (this.list.length && this.list[0].expires <= now) {
+      this.list.shift().dispose();
+      changed = true;
+    }
+
+    if (this.typingBubble) this.typingBubble.update(dt);
+    if (changed) this.layout();
+  }
+
+  setBaseY(y) {
+    if (y === this.baseY) return;
+    this.baseY = y;
+    this.layout();
+  }
+
+  /** Bottom-up: newest sits on the base, each older one stacked on top of it. */
+  layout() {
+    let y = this.baseY;
+
+    if (this.typingBubble) {
+      this.typingBubble.sprite.position.y = y;
+      return;
+    }
+
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const b = this.list[i];
+      b.sprite.position.y = y;
+      y += b.contentTop + BUBBLE_STACK_GAP;
+    }
+  }
+
+  dispose() {
+    for (const b of this.list) b.dispose();
+    this.list.length = 0;
+    this.clearTyping();
   }
 }
 
@@ -816,36 +871,30 @@ class Avatar {
     this.group.add(this.tag);
   }
 
-  /** Lazily creates the bubble; most players never say anything. */
+  /** Lazily creates the column; most players never say anything. */
   ensureBubble() {
-    if (!this.bubbleObj) this.bubbleObj = new Bubble(this.group);
+    if (!this.bubbleObj) this.bubbleObj = new BubbleStack(this.group);
     return this.bubbleObj;
   }
 
   /**
-   * Pushes a line of chat onto the bubble. Lines stack downward — the newest
-   * sits at the bottom, right above the tail — and each ages out on its own
-   * clock, so a quick exchange reads as a short transcript over the head
-   * rather than one message stamping over the last.
+   * Adds a line of chat. Each message is its own bubble: the new one appears
+   * at the bottom, against the head, and whatever was already said rises to
+   * sit above it. Every bubble ages out on its own clock, so the column
+   * drains from the top in the order it filled.
    */
   say(text) {
     const msg = String(text).slice(0, CHAT_MAX).trim();
     if (!msg) return;
 
     this.typing = false;
-    this.ensureBubble().showText(msg);
+    this.ensureBubble().push(msg);
   }
 
   /** The three animated dots, shown while someone is composing. */
   setTyping(on) {
     this.typing = !!on;
-    const b = this.ensureBubble();
-
-    if (on) {
-      if (b.mode !== 'text') b.showTyping();
-    } else if (b.mode === 'typing') {
-      b.hide();
-    }
+    this.ensureBubble().setTyping(this.typing);
   }
 
   setSkin(index) {
@@ -959,13 +1008,13 @@ class Avatar {
     if (this.bubbleObj) {
       // Fixed height, not this.tagY — see HEAD_TOP. A remote player carries a
       // name tag under the bubble, so theirs needs the extra clearance.
-      this.bubbleObj.sprite.position.y =
-        HEAD_TOP + (this.tag ? TAG_CLEARANCE + BUBBLE_GAP : BUBBLE_GAP * 0.4);
+      this.bubbleObj.setBaseY(
+        HEAD_TOP + (this.tag ? TAG_CLEARANCE + BUBBLE_GAP : BUBBLE_GAP * 0.4));
       this.bubbleObj.update(dt);
 
-      // Once the last line has aged out, fall back to the dots if they have
+      // Once the last bubble has aged out, fall back to the dots if they have
       // already started composing the next message.
-      if (this.bubbleObj.mode === null && this.typing) this.bubbleObj.showTyping();
+      if (this.typing) this.bubbleObj.setTyping(true);
     }
 
     if (!this.tag) {
@@ -1006,7 +1055,6 @@ class Avatar {
   }
 
   dispose() {
-    clearTimeout(this.bubbleTimer);
     if (this.bubbleObj) this.bubbleObj.dispose();
     if (this.tag) this.tag.element.remove();
     scene.remove(this.group);
@@ -1643,12 +1691,15 @@ function onHostMessage(conn, msg) {
     const avatar = ensureRemote(conn.peer, msg.n, msg.k);
     applyState(avatar, msg);
   } else if (msg.t === 'chat') {
+    // Trimmed here as well as on display: the host is the one relaying, and a
+    // patched client shouldn't get to push a longer line into the room.
+    const text = String(msg.text || '').slice(0, CHAT_MAX);
     const avatar = ensureRemote(conn.peer, msg.n);
-    avatar.say(msg.text);
+    avatar.say(text);
 
     // Relay to every other client. The sender already showed it locally, so
     // echoing it back would double the bubble.
-    const packet = { t: 'chat', id: conn.peer, text: msg.text };
+    const packet = { t: 'chat', id: conn.peer, text };
     for (const [id, c] of connections) {
       if (id !== conn.peer && c.open) c.send(packet);
     }
