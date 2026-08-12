@@ -13,7 +13,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v28 outline + specular';
+const BUILD = 'v29 outline fix';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -106,13 +106,13 @@ const ENV_INTENSITY = 0.5;
    faces flipped and its vertices pushed out along their normals, so it is
    hidden behind the real model everywhere except around the edge. Cheap, and
    unlike a post-process edge filter it survives being rendered into a
-   quarter-resolution buffer without breaking up.
+   third-resolution buffer without breaking up.
 
-   Width is in world units and gets divided by the model's own scale before
-   it reaches the shader. Too wide and it stops reading as a line and starts
-   looking like a shadow; past about 0.05 it also starts to separate at sharp
-   creases like the armpits. */
-const OUTLINE_WIDTH = 0.022;
+   Width is in metres, measured at the character — 0.02 against a 1.8m figure
+   is roughly a pixel at normal camera distance. The push happens in view
+   space, so this value means the same thing regardless of how the model is
+   scaled. Set to 0 to turn outlines off entirely. */
+const OUTLINE_WIDTH = 0.02;
 const OUTLINE_COLOR = 0x141a20;
 
 let mySkin = 0;
@@ -840,6 +840,25 @@ const sfx = {
  * `normal` is used rather than `objectNormal` because it is declared for
  * every material, skinned or not, so this works on any mesh in the model.
  */
+/**
+ * Builds the inverted-hull outline material.
+ *
+ * The push is done in view space, on `mvPosition`, rather than in object
+ * space on `transformed`. That distinction is the whole fix for the outline
+ * ballooning into a black blob.
+ *
+ * Object space is not a fixed unit. The FBX carries its own authoring scale,
+ * the loader applies another, the model is then normalised to 1.8m tall, and
+ * for a skinned mesh the bind matrix multiplies in a further factor on top —
+ * so an offset written in object space arrives at the screen multiplied by
+ * the product of all of them. Dividing by the model's scale only cancelled
+ * one term out of several, which is why it came out orders of magnitude too
+ * wide.
+ *
+ * View space has none of that. The camera matrix carries no scale, so a unit
+ * there is a metre, and the width means exactly what it says at any model
+ * scale.
+ */
 function makeOutlineMaterial(width) {
   const mat = new THREE.MeshBasicMaterial({
     color: OUTLINE_COLOR,
@@ -847,15 +866,37 @@ function makeOutlineMaterial(width) {
     fog: true                   // so distant outlines recede with everything else
   });
 
-  // Baked in as a literal rather than passed as a uniform: every avatar is
-  // normalised to the same height and therefore the same width, and a literal
-  // keeps the shader free of per-instance state.
+  // Baked in as a literal rather than passed as a uniform: every avatar uses
+  // the same width, and a literal keeps the shader free of per-instance state.
   const w = width.toFixed(6);
 
   mat.onBeforeCompile = shader => {
+    /* Replacing project_vertex outright rather than appending to it, since
+       the offset has to land between the model-view transform and the
+       projection. mvPosition is redeclared here because the fog varying
+       downstream still reads it. */
     shader.vertexShader = shader.vertexShader.replace(
-      '#include <begin_vertex>',
-      `#include <begin_vertex>\n\ttransformed += normalize( normal ) * ${w};`
+      '#include <project_vertex>',
+      `
+      vec3 outlineNormal;
+
+      #if defined( USE_ENVMAP ) || defined( USE_SKINNING )
+        /* transformedNormal is the skinned normal already in view space,
+           which is what a deforming character needs. BackSide sets
+           FLIP_SIDED, and three has flipped it to match — undo that, or the
+           shell would be pulled inward and vanish. */
+        outlineNormal = normalize( transformedNormal );
+        #ifdef FLIP_SIDED
+          outlineNormal = - outlineNormal;
+        #endif
+      #else
+        outlineNormal = normalize( normalMatrix * normal );
+      #endif
+
+      vec4 mvPosition = modelViewMatrix * vec4( transformed, 1.0 );
+      mvPosition.xyz += outlineNormal * ${w};
+      gl_Position = projectionMatrix * mvPosition;
+      `
     );
   };
 
@@ -931,12 +972,12 @@ class Avatar {
     const box2 = new THREE.Box3().setFromObject(model);
     model.position.y -= box2.min.y;
 
-    /* After scaling, so the width can be converted into the model's own
-       units. The raw FBX is authored at whatever size the exporter used, and
-       a fixed local-space offset would come out a different thickness for
-       any model of a different scale. */
-    this.outlineMaterial = makeOutlineMaterial(OUTLINE_WIDTH / (model.scale.x || 1));
-    buildOutline(model, this.outlineMaterial);
+    /* Width is a plain world-space measurement now — the shader offsets in
+       view space, so no conversion from the model's own units is needed. */
+    if (OUTLINE_WIDTH > 0) {
+      this.outlineMaterial = makeOutlineMaterial(OUTLINE_WIDTH);
+      buildOutline(model, this.outlineMaterial);
+    }
 
     this.group = new THREE.Group();
     this.group.add(model);
