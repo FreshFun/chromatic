@@ -291,6 +291,13 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
 
 #hud b { color: var(--text); font-weight: 600; }
 
+/* Empty unless muted, so it costs nothing when sound is on. */
+#mutehint {
+  color: var(--error);
+  font-weight: 600;
+  letter-spacing: .06em;
+}
+
 #netstatus {
   position: fixed;
   right: 14px;

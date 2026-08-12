@@ -13,7 +13,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v26 dom bubbles';
+const BUILD = 'v27 footsteps';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -545,6 +545,248 @@ class BubbleStack {
 }
 
 /* --------------------------------------------------------------------------
+   Sound
+
+   Synthesised rather than sampled. Three reasons, in order of weight:
+
+   1. A footstep library is a few hundred KB of audio for what amounts to a
+      noise burst and a thump. assets.js is already 1.1 MB and there is no
+      good argument for making the download heavier for this.
+   2. Synthesis is varied for free. The single worst failure of game
+      footsteps is the machine-gun effect — the same file retriggering at a
+      fixed interval until it reads as a loop rather than as a person. Every
+      step here is built fresh with its own filter colour, pitch and noise
+      offset, and left and right feet are deliberately different.
+   3. It matches the look. The world is deliberately low-fidelity; a
+      photoreal boot on gravel would sit oddly against it.
+
+   Timing comes from the run clip's own playhead — see stepFootsteps. That
+   keeps the sound locked to the visible legs at every speed, and works for
+   remote avatars unchanged, since their mixer runs the same clip at a rate
+   derived from the speed in their packets.
+   -------------------------------------------------------------------------- */
+
+/* Where in the run cycle the feet actually touch down. The clip's start frame
+   is whatever the animator happened to export, so if the sound lands slightly
+   off the visible footfall, nudge this — 0 to 1 walks the timing right
+   through one full cycle. */
+const FOOT_PHASE     = 0;
+
+const STEP_MIN_SPEED = 0.9;    // below this the character is shuffling, not walking
+const SFX_VOLUME     = 0.55;   // master trim
+const SFX_REF        = 6;      // metres at which a sound is at half gain
+const SFX_RANGE      = 42;     // past this, skip the sound entirely
+
+const sfxDir = new THREE.Vector3();
+const sfxRight = new THREE.Vector3();
+
+const sfx = {
+  ctx: null,
+  master: null,
+  noise: null,
+  muted: false,
+
+  /**
+   * Browsers refuse to start an AudioContext outside a user gesture, so this
+   * is called from the first click or keypress rather than at load.
+   */
+  init() {
+    if (this.ctx) return;
+
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;                   // no Web Audio: the game just stays silent
+
+    this.ctx = new AC();
+    this.master = this.ctx.createGain();
+    this.master.gain.value = this.muted ? 0 : SFX_VOLUME;
+    this.master.connect(this.ctx.destination);
+
+    /* One second of white noise, generated once and replayed from a random
+       offset each time. Rebuilding a buffer per footstep would allocate
+       thousands of times a minute for a sound nobody could tell apart. */
+    const len = this.ctx.sampleRate;
+    this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const data = this.noise.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  },
+
+  /** A tab switch suspends the context; this brings it back. */
+  resume() {
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+  },
+
+  setMuted(on) {
+    this.muted = !!on;
+    if (this.master) this.master.gain.value = this.muted ? 0 : SFX_VOLUME;
+  },
+
+  /**
+   * Opens a per-sound chain placed relative to the camera, or returns null if
+   * the source is muted, too far away, or the context never started.
+   *
+   * Distance and panning are done by hand rather than with a PannerNode. A
+   * panner needs the AudioListener kept in sync with the camera every frame,
+   * and for sounds this short the difference is inaudible next to a plain
+   * gain and a stereo pan.
+   */
+  begin(pos) {
+    if (!this.ctx || this.muted) return null;
+
+    const dist = camera.position.distanceTo(pos);
+    if (dist > SFX_RANGE) return null;
+
+    const ctx = this.ctx;
+    const gain = ctx.createGain();
+
+    // Inverse-square-ish falloff, which drops off convincingly without ever
+    // hitting zero abruptly the way linear distance does.
+    const k = dist / SFX_REF;
+    gain.gain.value = 1 / (1 + k * k);
+
+    let head = gain;
+
+    if (ctx.createStereoPanner) {
+      const pan = ctx.createStereoPanner();
+
+      sfxDir.subVectors(pos, camera.position).normalize();
+      sfxRight.setFromMatrixColumn(camera.matrixWorld, 0);
+
+      /* Eased out at close range. Your own feet are roughly under the camera,
+         where the direction vector is unstable and a small sidestep would
+         otherwise slam the sound hard into one ear. */
+      const spread = Math.min(1, dist / 3);
+      pan.pan.value = THREE.MathUtils.clamp(sfxDir.dot(sfxRight), -1, 1) * spread;
+
+      gain.connect(pan);
+      head = pan;
+    }
+
+    head.connect(this.master);
+    return { ctx, out: gain, t: ctx.currentTime };
+  },
+
+  /**
+   * One footfall. Two layers: a filtered noise burst for the scuff of the
+   * surface, and a fast pitch-dropping sine underneath for the weight.
+   * Neither alone is convincing — noise on its own sounds like static, and
+   * the sine on its own sounds like a drum.
+   *
+   * `right` alternates the feet and `intensity` is 0..1 by speed.
+   */
+  footstep(pos, right, intensity) {
+    const c = this.begin(pos);
+    if (!c) return;
+
+    const { ctx, out, t } = c;
+    const level = 0.45 + intensity * 0.55;
+
+    // Scuff.
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.playbackRate.value = 0.85 + Math.random() * 0.3;
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+
+    // Left and right sit in slightly different places, then jitter on top.
+    // Identical consecutive steps are what produce the machine-gun effect.
+    bp.frequency.value = (right ? 1400 : 1150) * (0.9 + Math.random() * 0.2);
+    bp.Q.value = 0.9;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5 * level, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+
+    src.connect(bp).connect(g).connect(out);
+    src.start(t, Math.random() * 0.5);   // random offset, so no repeated grain
+    src.stop(t + 0.13);
+
+    // Weight.
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(150 * (0.95 + Math.random() * 0.1), t);
+    osc.frequency.exponentialRampToValueAtTime(60, t + 0.08);
+
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.exponentialRampToValueAtTime(0.3 * level, t + 0.006);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+
+    osc.connect(og).connect(out);
+    osc.start(t);
+    osc.stop(t + 0.11);
+  },
+
+  /** Touchdown. The same shape as a footstep, heavier and slower to decay. */
+  land(pos) {
+    const c = this.begin(pos);
+    if (!c) return;
+
+    const { ctx, out, t } = c;
+
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.playbackRate.value = 0.7;
+
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 900;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.6, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+
+    src.connect(lp).connect(g).connect(out);
+    src.start(t, Math.random() * 0.5);
+    src.stop(t + 0.24);
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(130, t);
+    osc.frequency.exponentialRampToValueAtTime(45, t + 0.14);
+
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.exponentialRampToValueAtTime(0.5, t + 0.008);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+
+    osc.connect(og).connect(out);
+    osc.start(t);
+    osc.stop(t + 0.2);
+  },
+
+  /** Launch. Brief and quiet — the landing is the one that should land. */
+  jump(pos) {
+    const c = this.begin(pos);
+    if (!c) return;
+
+    const { ctx, out, t } = c;
+
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.playbackRate.value = 1.2;
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(700, t);
+    bp.frequency.exponentialRampToValueAtTime(1800, t + 0.09);
+    bp.Q.value = 1.1;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.32, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+
+    src.connect(bp).connect(g).connect(out);
+    src.start(t, Math.random() * 0.5);
+    src.stop(t + 0.12);
+  }
+};
+
+
+/* --------------------------------------------------------------------------
    Avatar
    Wraps one character instance: model, mixer, animation weights, name tag.
    The same class drives the local player and every remote one; only who sets
@@ -616,6 +858,11 @@ class Avatar {
     this.jumpPhase = 'none';
     this.jumpClock = 0;
     this.jumpBlend = 0;
+
+    // Footstep state. footHalf is which half of the run cycle the playhead
+    // was in last frame; a change is a footfall.
+    this.footHalf = -1;
+    this.footRight = false;
 
     // Remote interpolation targets
     this.targetPos = new THREE.Vector3();
@@ -703,6 +950,7 @@ class Avatar {
       if (prev < LAUNCH_TIME && this.jumpClock >= LAUNCH_TIME) {
         this.velY = JUMP_SPEED;
         this.grounded = false;
+        sfx.jump(this.group.position);
       }
 
       if (this.jumpClock >= this.jumpDuration ||
@@ -721,6 +969,7 @@ class Avatar {
         this.group.position.y = 0;
         this.velY = 0;
         this.grounded = true;
+        sfx.land(this.group.position);
       }
     }
   }
@@ -751,6 +1000,43 @@ class Avatar {
     this.mixer.update(dt);
   }
 
+  /**
+   * Fires a footstep twice per run cycle, read off the clip's own playhead.
+   *
+   * Distance travelled was the obvious alternative and is worse: the run
+   * clip's playback rate already scales with speed, so a fixed stride length
+   * drifts against the legs and the sound slowly desynchronises from the
+   * visible footfalls. Reading the clip phase means the cadence is correct at
+   * every speed by construction, with nothing to tune. It works for remote
+   * avatars too, since their mixer runs the same clip at a rate derived from
+   * the speed in their packets.
+   *
+   * The clip keeps playing at weight zero when the character stops, so the
+   * speed and ground checks are what stop a stationary figure tapping its
+   * feet.
+   */
+  stepFootsteps() {
+    if (!this.grounded || this.jumpPhase === 'active') return;
+    if (this.speed < STEP_MIN_SPEED) return;
+
+    const run = this.actions.run;
+    const dur = run.getClip().duration;
+    if (!dur) return;
+
+    // Two contacts per cycle. Which half of the cycle the playhead is in is
+    // all this needs — no wrap handling, since a change in either direction
+    // is a new step.
+    const phase = (run.time / dur + FOOT_PHASE) % 1;
+    const half = phase < 0.5 ? 0 : 1;
+
+    if (half === this.footHalf) return;
+    this.footHalf = half;
+
+    this.footRight = !this.footRight;
+    sfx.footstep(this.group.position, this.footRight,
+                 Math.min(1, this.speed / RUN_SPEED));
+  }
+
   /** Remote avatars ease toward the last received transform. */
   stepRemote(dt) {
     const k = 1 - Math.exp(-12 * dt);
@@ -764,6 +1050,7 @@ class Avatar {
 
     this.stepJump(dt);
     this.stepAnimation(dt);
+    this.stepFootsteps();
     this.stepTag(dt);
   }
 
@@ -914,6 +1201,7 @@ function stepLocal(dt) {
 
   local.stepJump(dt);
   local.stepAnimation(dt);
+  local.stepFootsteps();
   local.stepTag(dt);
 }
 
@@ -2030,6 +2318,7 @@ function bindChat() {
     if (chatOpen || !local) return;
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
     if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
+    if (e.code === 'KeyM') { e.preventDefault(); toggleMute(); }
   });
 
   el('btn-chat').addEventListener('touchstart', e => {
@@ -2252,3 +2541,29 @@ el('btn-leave').addEventListener('touchstart', e => {
   leaveGame();
 }, { passive: false });
 
+
+/* --------------------------------------------------------------------------
+   Audio unlock
+
+   An AudioContext created outside a user gesture starts suspended, and on
+   iOS one created at load never starts at all — so it is built on the first
+   real interaction instead. These stay bound rather than firing once,
+   because a context also suspends when the tab is backgrounded and has to be
+   resumed on the way back in. Both calls are cheap no-ops after the first.
+   -------------------------------------------------------------------------- */
+
+function unlockAudio() {
+  sfx.init();
+  sfx.resume();
+}
+
+addEventListener('pointerdown', unlockAudio);
+addEventListener('keydown', unlockAudio);
+addEventListener('touchstart', unlockAudio, { passive: true });
+addEventListener('visibilitychange', () => { if (!document.hidden) sfx.resume(); });
+
+/** M toggles sound. The HUD carries the only indicator it needs. */
+function toggleMute() {
+  sfx.setMuted(!sfx.muted);
+  el('mutehint').textContent = sfx.muted ? ' · SOUND OFF' : '';
+}
