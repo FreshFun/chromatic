@@ -305,9 +305,15 @@ const _qGrp = new THREE.Quaternion();
 const _qRel = new THREE.Quaternion();
 const _eRel = new THREE.Euler(0, 0, 0, 'YXZ');
 
-/* Captured from the first clip processed (idle, the rest pose) and reused for
-   every clip after it, so no two clips disagree about where the hips sit. */
-let hipRest = null;
+/* Where each bone is parked horizontally, captured from the first clip
+   processed (idle, the rest pose) and reused by every clip after it, so no two
+   clips can disagree about where any part of the body sits.
+
+   Keyed by bone name rather than kept for the hips alone: which node carries
+   the baked travel depends entirely on how the FBX was exported, and on this
+   rig it is neither "root" nor "hips" but the Armature itself — which fell
+   through every name test and kept its own clip's offset. */
+const restPos = new Map();
 
 const isRootBone = b => {
   const n = b.toLowerCase();
@@ -351,26 +357,25 @@ function lockRootMotion(clip) {
          Flattening everything horizontally is the safe move: no bone in a
          humanoid rig should be translating sideways on its own anyway.
 
-         The average across the clip, not frame one. Frame one of a run cycle
-         lands mid-stride with the hips already swung out to one side, so
-         pinning to it left the body offset from the point it rotates about —
-         and a constant offset from a pivot orbits that pivot on every turn,
-         which is the side-to-side shift. The mean is the centre of the
-         stride, so the body sits over its own axis. */
-      let sx = 0, sz = 0, n = 0;
-      for (let i = 0; i < v.length; i += 3) { sx += v[i]; sz += v[i + 2]; n++; }
+         Pinned to one shared point per bone, captured from the first clip
+         loaded — idle, which is a rest pose. NOT to the clip's own average.
 
-      let px = sx / n, pz = sz / n;
+         The average is only the centre of the stride on a clip that stays put.
+         On a clip with travel baked in it is halfway down the runway: this
+         rig's run clip walks its root 580 units forward, so its mean lands
+         about 250 units — roughly a metre at final scale — ahead of where idle
+         parks the same bone. Pinning to that put the rendered body a metre in
+         front of the position the camera, the shadow and the network all
+         follow. Because the offset lives in the character's own frame it
+         swung around that point on every turn, and appeared and disappeared as
+         the mixer blended run in and out — a character that lurches away from
+         where it should be and snaps back. One shared point instead means the
+         body sits over its origin in every clip and at every blend weight.
 
-      /* Hips are pinned to one shared point across every clip — the first one
-         loaded, which is the idle rest pose. Per-clip means would put idle and
-         run in slightly different places, and the mixer cross-fading between
-         them would slide the body sideways as the character sped up. */
-      if (isHip(bone)) {
-        if (!hipRest) hipRest = { x: px, z: pz };
-        px = hipRest.x;
-        pz = hipRest.z;
-      }
+         Y is left alone: the vertical bob is small, it is the same in idle and
+         run, and the jump clip's own rise is wanted on top of the physics. */
+      if (!restPos.has(bone)) restPos.set(bone, [v[0], v[2]]);
+      const [px, pz] = restPos.get(bone);
 
       for (let i = 0; i < v.length; i += 3) {
         v[i] = px;
@@ -1202,11 +1207,23 @@ function stepLocal(dt) {
   if (moving) {
     const want = Math.atan2(move.x, move.z);
 
-    let d = want - headingTarget;
-    while (d >  Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
+    /* From a standstill the heading is taken outright rather than eased into.
+       It is only meaningful while moving, so after a stop it still holds
+       whichever way the last run ended — and easing out of that means the first
+       fraction of a second of every fresh start is spent travelling the old
+       way at a speed that is already ramping up. Turn the camera around, push
+       off, and the character sets out backwards for a quarter second and
+       curves round. Smoothing is for steering mid-run, not for the first
+       frame, where there is nothing yet to smooth against. */
+    if (local.speed < 0.05) {
+      headingTarget = want;
+    } else {
+      let d = want - headingTarget;
+      while (d >  Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
 
-    headingTarget += d * (1 - Math.exp(-HEADING_SMOOTH * dt));
+      headingTarget += d * (1 - Math.exp(-HEADING_SMOOTH * dt));
+    }
   }
 
   const target = moving ? RUN_SPEED * throttle : 0;
@@ -2387,17 +2404,12 @@ function bindChat() {
 
   el('btn-chat').addEventListener('click', e => { e.preventDefault(); openChat(); });
 
-  /* T, and only T, opens chat while playing. Enter deliberately does not: the
-     capture-phase handler above sends on Enter and closes the bar, and this
-     listener runs afterwards on the very same event, so an Enter opener would
-     see chatOpen already false and immediately reopen the box the player just
-     sent from. Sending now ends the exchange — press T again to type again.
-     The activeElement check keeps T from firing while the player is typing
-     their name on the title screen. */
+  /* T or Enter opens chat while playing. The activeElement check keeps either
+     from firing while the player is typing their name on the title screen. */
   addEventListener('keydown', e => {
     if (chatOpen || !local) return;
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
-    if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
+    if (e.code === 'KeyT' || e.key === 'Enter') { e.preventDefault(); openChat(); }
   });
 
   /* On a phone the keyboard covers the bottom of the screen, including the bar
