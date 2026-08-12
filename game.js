@@ -13,7 +13,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v29 outline fix';
+const BUILD = 'v31 pixel outlines';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -108,12 +108,60 @@ const ENV_INTENSITY = 0.5;
    unlike a post-process edge filter it survives being rendered into a
    third-resolution buffer without breaking up.
 
-   Width is in metres, measured at the character — 0.02 against a 1.8m figure
-   is roughly a pixel at normal camera distance. The push happens in view
-   space, so this value means the same thing regardless of how the model is
-   scaled. Set to 0 to turn outlines off entirely. */
-const OUTLINE_WIDTH = 0.02;
-const OUTLINE_COLOR = 0x141a20;
+   Width is in *buffer pixels*, not metres, and that is what stops the
+   characters looking heavy. A hull expanded by a fixed distance in the world
+   adds that distance to every part equally, so it lands as a fixed
+   proportion of nothing: 2cm on a 25cm head is barely noticeable, but the
+   same 2cm on a 12cm arm makes the arm a third thicker. Thin limbs fatten,
+   the figure reads as padded, and moving closer to the camera makes it
+   worse, since the same 2cm covers more of the screen.
+
+   A pixel-width offset instead gives every part of the body the same one
+   pixel of edge no matter its thickness or its distance, which reads as a
+   drawn line rather than as mass. It also matches how the rest of the render
+   behaves — one buffer pixel is one visible block. */
+const OUTLINE_PIXELS = 1.0;
+
+/* NDC covered by one buffer pixel, shared by every outline material and
+   refreshed whenever the drawing buffer is resized. One object handing its
+   value to all of them, so a resize is a single assignment. */
+const outlinePixel = { value: new THREE.Vector2(0.002, 0.002) };
+
+/* The outline takes its colour from the skin rather than being one flat near
+   black. A single dark colour reads as a sticker cut out and laid behind the
+   figure; a darkened version of the surface it borders reads as the surface
+   turning away from the light, which is what an edge actually is.
+
+   Derived rather than hand-picked per skin, so adding a skin needs nothing
+   here. Hue is kept, lightness cut hard, and saturation pushed up slightly to
+   compensate — dark colours read as washed out otherwise, and the gold in
+   particular goes muddy brown without it. */
+const OUTLINE_LIGHTNESS = 0.35;   // fraction of the skin's own lightness
+const OUTLINE_SAT       = 1.25;
+
+const outlineHSL = {};
+
+/**
+ * Darkens a skin colour into its outline.
+ *
+ * The HSL conversions are pinned to sRGB. Three stores colour linearly, and
+ * scaling lightness in linear space is much weaker than it looks — a 0.35
+ * multiplier there lands around 0.6 perceptually, which is nowhere near dark
+ * enough to read as an edge.
+ */
+function outlineColorFor(hex) {
+  const c = new THREE.Color(hex);
+  c.getHSL(outlineHSL, THREE.SRGBColorSpace);
+
+  c.setHSL(
+    outlineHSL.h,
+    Math.min(1, outlineHSL.s * OUTLINE_SAT),
+    outlineHSL.l * OUTLINE_LIGHTNESS,
+    THREE.SRGBColorSpace
+  );
+
+  return c;
+}
 
 let mySkin = 0;
 
@@ -432,12 +480,16 @@ function buildScene() {
  * the stylesheet stretches the small buffer back to full screen.
  */
 function applyResolution() {
-  renderer.setSize(
-    Math.max(1, Math.floor(innerWidth / PIXEL_SIZE)),
-    Math.max(1, Math.floor(innerHeight / PIXEL_SIZE)),
-    false
-  );
+  const w = Math.max(1, Math.floor(innerWidth / PIXEL_SIZE));
+  const h = Math.max(1, Math.floor(innerHeight / PIXEL_SIZE));
+
+  renderer.setSize(w, h, false);
   labelRenderer.setSize(innerWidth, innerHeight);
+
+  /* NDC spans -1 to 1, so one buffer pixel is 2/size. Outlines read this to
+     hold a constant pixel width; without the update they would change
+     thickness whenever the window resized. */
+  outlinePixel.value.set(2 / w, 2 / h);
 }
 
 /* --------------------------------------------------------------------------
@@ -830,51 +882,36 @@ const sfx = {
 /**
  * Builds the inverted-hull outline material.
  *
- * The push happens on `transformed` immediately after `begin_vertex`, which
- * is *before* the skinning include runs. That ordering matters: offsetting
- * first means the skinning transform carries the offset along with the
- * vertex, so the outline deforms with the animation. Offsetting after
- * skinning would leave a shell that stayed in the bind pose while the
- * character moved inside it.
+ * The offset is applied in clip space, after projection, which is what makes
+ * the width a screen measurement rather than a world one. Doing it earlier —
+ * in object space or view space — ties the thickness to the model's own size
+ * and to its distance from the camera, and that is what made the characters
+ * look padded.
  *
- * `normal` is used rather than `objectNormal` because it is declared for
- * every material, skinned or not, so this works on any mesh in the model.
+ * Object space is worse still, and worth naming because it was the first
+ * attempt: it is not a fixed unit at all. The FBX carries its own authoring
+ * scale, the loader applies another, the model is normalised to 1.8m tall,
+ * and a skinned mesh multiplies in the bind matrix on top — so an offset
+ * written there arrives multiplied by the product of all of them.
  */
-/**
- * Builds the inverted-hull outline material.
- *
- * The push is done in view space, on `mvPosition`, rather than in object
- * space on `transformed`. That distinction is the whole fix for the outline
- * ballooning into a black blob.
- *
- * Object space is not a fixed unit. The FBX carries its own authoring scale,
- * the loader applies another, the model is then normalised to 1.8m tall, and
- * for a skinned mesh the bind matrix multiplies in a further factor on top —
- * so an offset written in object space arrives at the screen multiplied by
- * the product of all of them. Dividing by the model's scale only cancelled
- * one term out of several, which is why it came out orders of magnitude too
- * wide.
- *
- * View space has none of that. The camera matrix carries no scale, so a unit
- * there is a metre, and the width means exactly what it says at any model
- * scale.
- */
-function makeOutlineMaterial(width) {
+function makeOutlineMaterial(pixels) {
   const mat = new THREE.MeshBasicMaterial({
-    color: OUTLINE_COLOR,
+    color: 0x000000,            // placeholder — setSkin drives this
     side: THREE.BackSide,       // only the far faces survive, hence a shell
     fog: true                   // so distant outlines recede with everything else
   });
 
-  // Baked in as a literal rather than passed as a uniform: every avatar uses
-  // the same width, and a literal keeps the shader free of per-instance state.
-  const w = width.toFixed(6);
+  const px = pixels.toFixed(3);
 
   mat.onBeforeCompile = shader => {
+    // The same uniform object every outline shares, so one resize updates all.
+    shader.uniforms.uOutlinePixel = outlinePixel;
+
+    shader.vertexShader = 'uniform vec2 uOutlinePixel;\n' + shader.vertexShader;
+
     /* Replacing project_vertex outright rather than appending to it, since
-       the offset has to land between the model-view transform and the
-       projection. mvPosition is redeclared here because the fog varying
-       downstream still reads it. */
+       the offset has to land after the projection. mvPosition is redeclared
+       here because the fog varying downstream still reads it. */
     shader.vertexShader = shader.vertexShader.replace(
       '#include <project_vertex>',
       `
@@ -894,15 +931,27 @@ function makeOutlineMaterial(width) {
       #endif
 
       vec4 mvPosition = modelViewMatrix * vec4( transformed, 1.0 );
-      mvPosition.xyz += outlineNormal * ${w};
-      gl_Position = projectionMatrix * mvPosition;
+      vec4 clipPos = projectionMatrix * mvPosition;
+
+      /* The normal carried through the projection, which gives the direction
+         the edge runs on screen. Only xy matters; pushing along z would move
+         the shell toward or away from the camera and break the depth test
+         that hides it behind the body. */
+      vec3 clipNormal = normalize( ( projectionMatrix * vec4( outlineNormal, 0.0 ) ).xyz );
+
+      /* Scaled by w, which is what converts a screen-space offset back into
+         clip space. Without it the outline would shrink with distance like a
+         world-space one and the whole point would be lost. */
+      clipPos.xy += clipNormal.xy * clipPos.w * uOutlinePixel * ${px};
+
+      gl_Position = clipPos;
       `
     );
   };
 
   // Without this three would reuse the plain MeshBasicMaterial program and
   // the injection above would silently do nothing.
-  mat.customProgramCacheKey = () => 'outline' + w;
+  mat.customProgramCacheKey = () => 'outline' + px;
 
   return mat;
 }
@@ -963,6 +1012,15 @@ class Avatar {
       }
     });
 
+    /* After the traverse above, or that traverse would find the shells and
+       overwrite their outline material with the body's. Before setSkin, so
+       there is something for the skin to colour. Set OUTLINE_PIXELS to 0 to
+       skip outlines entirely. */
+    if (OUTLINE_PIXELS > 0) {
+      this.outlineMaterial = makeOutlineMaterial(OUTLINE_PIXELS);
+      buildOutline(model, this.outlineMaterial);
+    }
+
     this.setSkin(skin);
 
     // Normalize height, then sit the feet on the ground.
@@ -971,13 +1029,6 @@ class Avatar {
     model.scale.setScalar(h > 0.001 ? 1.8 / h : 1);
     const box2 = new THREE.Box3().setFromObject(model);
     model.position.y -= box2.min.y;
-
-    /* Width is a plain world-space measurement now — the shader offsets in
-       view space, so no conversion from the model's own units is needed. */
-    if (OUTLINE_WIDTH > 0) {
-      this.outlineMaterial = makeOutlineMaterial(OUTLINE_WIDTH);
-      buildOutline(model, this.outlineMaterial);
-    }
 
     this.group = new THREE.Group();
     this.group.add(model);
@@ -1081,6 +1132,12 @@ class Avatar {
     this.material.metalness = s.metal;
     this.material.roughness = s.rough;
     this.material.needsUpdate = true;
+
+    // Guarded, because a skin can be set before the outline exists and can
+    // also be changed at any point afterwards from the title screen.
+    if (this.outlineMaterial) {
+      this.outlineMaterial.color.copy(outlineColorFor(s.color));
+    }
   }
 
   setName(name) {
