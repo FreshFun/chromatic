@@ -86,27 +86,19 @@
 </div>
 
 <!-- Chat. Hidden until T (or the 💬 button on touch) opens it, and it closes
-     itself after ten seconds of silence.
-
-     The line you type into is a div, not an <input>. Keystrokes are read off
-     the window on desktop, which is immune to the focus being stolen, and the
-     div wraps long messages onto extra rows instead of scrolling sideways.
-     #chatinput exists only on touch, to raise the on-screen keyboard. -->
+     itself after ten seconds of silence. The send arrow sits inside the input
+     pill rather than beside it — that tucked-in circle is the detail that
+     makes the compose bar read as Messages rather than as a generic form. -->
 <div id="chatbar" class="hidden">
   <div class="compose">
-    <div id="chatline" class="empty"><span id="chattext"></span><b id="chatcaret"></b></div>
+    <input id="chatinput" type="text" maxlength="150" autocomplete="off"
+           autocapitalize="sentences" spellcheck="false" placeholder="Message">
     <button id="chatsend" aria-label="Send" disabled>
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 19V6M12 6l-6.5 6.5M12 6l6.5 6.5"/>
       </svg>
     </button>
   </div>
-  <div class="compose meta">
-    <span id="chathint">Enter to send · Esc to cancel</span>
-    <span id="chatcount">0/150</span>
-  </div>
-  <input id="chatinput" type="text" maxlength="150" autocomplete="off"
-         autocapitalize="sentences" autocorrect="on" spellcheck="false" tabindex="-1">
 </div>
 
 <!-- Touch controls. The stick is positioned wherever the thumb lands rather

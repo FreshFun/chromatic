@@ -1,7 +1,3 @@
-/* ==========================================================================
-   ANON — game logic
-   ========================================================================== */
-
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -9,26 +5,22 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { MODELS, toBuffer } from './assets.js';
 
+
+/* ==========================================================================
+   ANON — game logic
+   ========================================================================== */
+
+
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v27 nospin';
+const BUILD = 'v24 chat stack';
 console.log('ANON build:', BUILD);
 
-/* Two ways to stop the character slewing left and right as it runs, and only
-   one of them can be on at a time.
-
-   STRIP_HIP_YAW edits the clip, zeroing the hip bone's rotation about its own
-   local Y. That only works if the rig's hips are bound Y-up. When they are
-   not, it removes a lean and leaves the swivel behind — which is what was
-   happening here, and why the swing survived it being switched on.
-
-   CANCEL_HIP_YAW measures the hips' actual yaw relative to the character every
-   frame and counter-rotates a pivot under the group. It costs one quaternion
-   read per avatar per frame and does not care how the rig was authored.
-
-   If the run ever looks stiff, these are the two switches to try. */
-const STRIP_HIP_YAW  = false;
-const CANCEL_HIP_YAW = true;
+/* The hip bone genuinely should rotate through a run — that motion is a lot
+   of what makes the stride read as weight. Removing its yaw stops the body
+   swinging left and right, but if the run ends up looking stiff, this is the
+   switch to turn back off. */
+const STRIP_HIP_YAW = true;
 
 /* --------------------------------------------------------------------------
    Tuning
@@ -129,56 +121,9 @@ const HEAD_TOP = 1.72;
 
 const CHAT_MAX      = 150;    // characters per message
 const CHAT_LIFETIME = 6500;   // how long a bubble stays up, in ms
-const CHAT_COOLDOWN = 700;    // minimum gap between messages, in ms
-const CHAT_BURST    = 3;      // messages that may be sent back-to-back
+const CHAT_COOLDOWN = 1200;   // minimum gap between messages, in ms
 const CHAT_IDLE     = 10000;  // compose bar closes itself after this silence
-
-/* --------------------------------------------------------------------------
-   Chat rate limiting
-
-   A token bucket rather than a flat "one message per 700ms" rule, because a
-   flat rule punishes normal conversation: people genuinely do fire off three
-   short lines in a row, and blocking the second one feels broken. The bucket
-   allows that burst, then throttles to one message per cooldown until it
-   refills.
-
-   It runs on incoming messages too, keyed per peer, not only on your own
-   sends. A cooldown enforced solely in the sender's client is not a limit at
-   all — anyone running modified code could ignore it — so the host applies the
-   same bucket before relaying, and every client applies it again on receipt.
-   -------------------------------------------------------------------------- */
-
-const chatBuckets = new Map();   // peer id -> { tokens, last }
-
-function allowChat(id) {
-  const now = performance.now();
-  let b = chatBuckets.get(id);
-
-  if (!b) {
-    b = { tokens: CHAT_BURST, last: now };
-    chatBuckets.set(id, b);
-  }
-
-  b.tokens = Math.min(CHAT_BURST, b.tokens + (now - b.last) / CHAT_COOLDOWN);
-  b.last = now;
-
-  if (b.tokens < 1) return false;
-
-  b.tokens -= 1;
-  return true;
-}
-
-/** Milliseconds until this sender may speak again; 0 when they may now. */
-function chatWait(id) {
-  const b = chatBuckets.get(id);
-  if (!b) return 0;
-
-  const tokens = Math.min(CHAT_BURST, b.tokens + (performance.now() - b.last) / CHAT_COOLDOWN);
-  return tokens >= 1 ? 0 : Math.ceil((1 - tokens) * CHAT_COOLDOWN);
-}
-const BUBBLE_GAP    = 0.42;   // how far the lowest bubble floats above the head
-const BUBBLE_STACK_MAX = 3;   // messages kept on screen before the oldest drops
-const BUBBLE_STACK_GAP = 0.06;// vertical space between stacked messages
+const BUBBLE_GAP    = 0.42;   // how far the bubble floats above the name tag
 const TAG_FADE_NEAR = 3.0;    // full opacity closer than this
 const TAG_FADE_FAR  = 34;     // fully faded beyond this
 
@@ -299,26 +244,6 @@ async function loadAssets() {
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
 
-/* Scratch for the per-frame hip measurement in Avatar.cancelHipYaw. */
-const _qHip = new THREE.Quaternion();
-const _qGrp = new THREE.Quaternion();
-const _qRel = new THREE.Quaternion();
-const _eRel = new THREE.Euler(0, 0, 0, 'YXZ');
-
-/* Captured from the first clip processed (idle, the rest pose) and reused for
-   every clip after it, so no two clips disagree about where the hips sit. */
-let hipRest = null;
-
-const isRootBone = b => {
-  const n = b.toLowerCase();
-  return n === 'root' || n === 'armature';
-};
-
-const isHipBone = b => {
-  const n = b.toLowerCase();
-  return n === 'pelvis' || n === 'hips' || n.endsWith(':hips') || n === 'hip';
-};
-
 function lockRootMotion(clip) {
   /* Two different problems, two different treatments.
 
@@ -336,45 +261,26 @@ function lockRootMotion(clip) {
 
   const LIMB = /(arm|leg|hand|foot|toe|head|neck|shoulder|clavicle|finger|thumb)/i;
 
-  const isRoot = isRootBone;
-  const isHip  = isHipBone;
+  const isRoot = b => {
+    const n = b.toLowerCase();
+    return n === 'root' || n === 'armature';
+  };
+
+  const isHip = b => {
+    const n = b.toLowerCase();
+    return n === 'pelvis' || n === 'hips' || n.endsWith(':hips') || n === 'hip';
+  };
 
   for (const track of clip.tracks) {
     const bone = boneOf(track.name);
     const v = track.values;
 
     if (track.name.endsWith('.position')) {
-      /* Every position track is flattened, not just the ones on bones named
-         "root" or "hips". Which node carries the baked travel varies with how
-         the FBX was exported, and filtering by name let it back in on this rig
-         — the character then slid away from where the script thought it was.
-         Flattening everything horizontally is the safe move: no bone in a
-         humanoid rig should be translating sideways on its own anyway.
-
-         The average across the clip, not frame one. Frame one of a run cycle
-         lands mid-stride with the hips already swung out to one side, so
-         pinning to it left the body offset from the point it rotates about —
-         and a constant offset from a pivot orbits that pivot on every turn,
-         which is the side-to-side shift. The mean is the centre of the
-         stride, so the body sits over its own axis. */
-      let sx = 0, sz = 0, n = 0;
-      for (let i = 0; i < v.length; i += 3) { sx += v[i]; sz += v[i + 2]; n++; }
-
-      let px = sx / n, pz = sz / n;
-
-      /* Hips are pinned to one shared point across every clip — the first one
-         loaded, which is the idle rest pose. Per-clip means would put idle and
-         run in slightly different places, and the mixer cross-fading between
-         them would slide the body sideways as the character sped up. */
-      if (isHip(bone)) {
-        if (!hipRest) hipRest = { x: px, z: pz };
-        px = hipRest.x;
-        pz = hipRest.z;
-      }
-
+      // Hold horizontal travel at frame one. Vertical stays, since that is
+      // what gives the jump its arc.
       for (let i = 0; i < v.length; i += 3) {
-        v[i] = px;
-        v[i + 2] = pz;
+        v[i] = v[0];
+        v[i + 2] = v[2];
       }
       continue;
     }
@@ -521,6 +427,7 @@ const BUBBLE_FONT   = 'bold 12px ui-monospace, "SF Mono", Menlo, Consolas, monos
 const BUBBLE_LINE   = 15;
 const BUBBLE_WRAP   = 220;     // max text width in canvas pixels
 const BUBBLE_LINES  = 8;       // enough rows to hold a full 150-character message
+const BUBBLE_STACK  = 4;       // how many messages a bubble holds before the top drops
 const BUBBLE_SCALE  = 0.0095;  // canvas pixels to world units
 
 /* Slack on every side of the canvas. Without it the tail tip lands on exactly
@@ -644,14 +551,24 @@ class Bubble {
     parent.add(this.sprite);
 
     this.mode = null;      // 'text' | 'typing'
-    this.text = '';
+
+    /* A stack rather than a single string. Each entry carries its own expiry,
+       so the oldest line falls off the top while newer ones keep sitting
+       underneath it, and the newest message is always the bottom row. */
+    this.messages = [];    // [{ text, expires }]
+
     this.phase = 0;
     this.clock = 0;
   }
 
   showText(text) {
     this.mode = 'text';
-    this.text = text;
+    this.messages.push({ text, expires: performance.now() + CHAT_LIFETIME });
+
+    // Past the cap the top line goes immediately, so the bubble never grows
+    // taller than the stack height no matter how fast someone talks.
+    while (this.messages.length > BUBBLE_STACK) this.messages.shift();
+
     this.draw();
     this.sprite.visible = true;
   }
@@ -667,11 +584,32 @@ class Bubble {
 
   hide() {
     this.mode = null;
+    this.messages.length = 0;
     this.sprite.visible = false;
   }
 
-  /** Advances the typing animation. Only redraws when the dots change. */
+  /**
+   * Ages the stack out and advances the typing animation. Expiry is checked
+   * against a timestamp per line rather than by timer, so lines drain from
+   * the top in order however quickly they arrived.
+   */
   update(dt) {
+    if (this.mode === 'text') {
+      const now = performance.now();
+      let dropped = false;
+
+      while (this.messages.length && this.messages[0].expires <= now) {
+        this.messages.shift();
+        dropped = true;
+      }
+
+      if (dropped) {
+        if (this.messages.length) this.draw();
+        else this.hide();
+      }
+      return;
+    }
+
     if (this.mode !== 'typing') return;
 
     this.clock += dt;
@@ -692,7 +630,15 @@ class Bubble {
       w = 46;
       h = 26;
     } else {
-      lines = wrapText(ctx, this.text, BUBBLE_WRAP);
+      /* Oldest first, so each new message lands under the one before it. A
+         blank row between blocks keeps two short messages from reading as one
+         wrapped sentence. */
+      lines = [];
+      this.messages.forEach((m, i) => {
+        if (i) lines.push('');
+        lines.push(...wrapText(ctx, m.text, BUBBLE_WRAP));
+      });
+
       let widest = 0;
       for (const l of lines) widest = Math.max(widest, ctx.measureText(l).width);
       w = Math.ceil(widest) + BUBBLE_PAD_X * 2;
@@ -809,31 +755,12 @@ class Avatar {
     const box2 = new THREE.Box3().setFromObject(model);
     model.position.y -= box2.min.y;
 
-    /* The model hangs off a pivot rather than the group directly. The pivot is
-       what counter-rotates each frame to cancel the clip's whole-body swivel;
-       the group keeps the character's real facing, and the name tag and chat
-       bubbles hang off the group so they never counter-rotate with it. */
-    this.pivot = new THREE.Group();
-    this.pivot.add(model);
-
     this.group = new THREE.Group();
-    this.group.add(this.pivot);
+    this.group.add(model);
     scene.add(this.group);
     this.model = model;
     this.tagY = TAG_HEIGHT;
     this.tagClock = 0;
-
-    // The bone whose yaw gets cancelled, and the reference yaw to hold it at.
-    this.hips = null;
-    this.hipYaw0 = null;
-    model.traverse(o => {
-      if (!this.hips && o.isBone && isHipBone(o.name)) this.hips = o;
-    });
-
-    // Chat state: a stack of recent messages, plus the typing dots.
-    this.bubbles = [];
-    this.typingBubble = null;
-    this.typing = false;
 
     this.mixer = new THREE.AnimationMixer(model);
     this.actions = {
@@ -889,78 +816,35 @@ class Avatar {
     this.group.add(this.tag);
   }
 
-  /* Chat bubbles are kept as a stack rather than a single reusable one, so a
-     second message pushes the first upward instead of replacing it — the
-     short back-and-forth of a real conversation stays readable. Newest sits
-     last in the array and nearest the head. Older entries drop off the top
-     once STACK_MAX is reached, and each expires on its own clock. */
+  /** Lazily creates the bubble; most players never say anything. */
+  ensureBubble() {
+    if (!this.bubbleObj) this.bubbleObj = new Bubble(this.group);
+    return this.bubbleObj;
+  }
+
+  /**
+   * Pushes a line of chat onto the bubble. Lines stack downward — the newest
+   * sits at the bottom, right above the tail — and each ages out on its own
+   * clock, so a quick exchange reads as a short transcript over the head
+   * rather than one message stamping over the last.
+   */
   say(text) {
     const msg = String(text).slice(0, CHAT_MAX).trim();
     if (!msg) return;
 
     this.typing = false;
-    if (this.typingBubble) this.typingBubble.hide();
-
-    const b = new Bubble(this.group);
-    b.showText(msg);
-    b.expiresAt = performance.now() + CHAT_LIFETIME;
-    this.bubbles.push(b);
-
-    while (this.bubbles.length > BUBBLE_STACK_MAX) {
-      this.bubbles.shift().dispose();
-    }
+    this.ensureBubble().showText(msg);
   }
 
   /** The three animated dots, shown while someone is composing. */
   setTyping(on) {
     this.typing = !!on;
+    const b = this.ensureBubble();
 
     if (on) {
-      if (!this.typingBubble) this.typingBubble = new Bubble(this.group);
-      this.typingBubble.showTyping();
-    } else if (this.typingBubble) {
-      this.typingBubble.hide();
-    }
-  }
-
-  /**
-   * Retires expired bubbles and stacks whatever is left. Positions are
-   * recomputed every frame rather than set once, because a bubble above can
-   * disappear at any moment and the ones below it have to close the gap.
-   */
-  stepBubbles(dt) {
-    const now = performance.now();
-
-    for (let i = this.bubbles.length - 1; i >= 0; i--) {
-      if (this.bubbles[i].expiresAt <= now) this.bubbles.splice(i, 1)[0].dispose();
-    }
-
-    if (!this.bubbles.length && !this.typingBubble) return;
-
-    // A remote player carries a name tag under the stack and needs the extra
-    // clearance; your own head does not.
-    let y = HEAD_TOP + (this.tag ? TAG_CLEARANCE + BUBBLE_GAP : BUBBLE_GAP * 0.4);
-
-    /* The dots belong at the bottom, right above the head, because that is
-       where the next message will appear. */
-    if (this.typingBubble) {
-      this.typingBubble.update(dt);
-      if (this.typingBubble.sprite.visible) {
-        this.typingBubble.sprite.position.y = y;
-        y += this.typingBubble.sprite.scale.y + BUBBLE_STACK_GAP;
-      }
-    }
-
-    /* Walking backwards through the array puts the newest message lowest and
-       carries the older ones up above it. */
-    for (let i = this.bubbles.length - 1; i >= 0; i--) {
-      const b = this.bubbles[i];
-      b.sprite.position.y = y;
-      y += b.sprite.scale.y + BUBBLE_STACK_GAP;
-
-      // Older messages recede slightly, so the newest one reads first.
-      const age = this.bubbles.length - 1 - i;
-      b.material.opacity = age === 0 ? 1 : Math.max(0.45, 1 - age * 0.28);
+      if (b.mode !== 'text') b.showTyping();
+    } else if (b.mode === 'typing') {
+      b.hide();
     }
   }
 
@@ -1044,46 +928,6 @@ class Avatar {
     this.actions.jump.setEffectiveWeight(this.jumpBlend);
 
     this.mixer.update(dt);
-    this.cancelHipYaw();
-  }
-
-  /**
-   * Removes the clip's whole-body swivel by measurement rather than by editing
-   * the keyframes.
-   *
-   * Editing the clip meant assuming the hip bone's local Y axis is "up". On a
-   * rig whose hips have a rotated bind pose that assumption is wrong: zeroing
-   * local Y strips a lean and leaves the actual swivel untouched, which is why
-   * the character kept swinging with STRIP_HIP_YAW on.
-   *
-   * This reads the hips' orientation relative to the group — real world-space
-   * yaw, whatever the rig's conventions — and turns the pivot the other way.
-   * The reference is whatever the hips read on the very first frame, so the
-   * bind orientation is preserved and only the per-stride *variation* is
-   * cancelled. Legs keep swinging; the torso stops slewing left and right.
-   */
-  cancelHipYaw() {
-    if (!CANCEL_HIP_YAW || !this.hips) return;
-
-    this.hips.getWorldQuaternion(_qHip);
-    this.group.getWorldQuaternion(_qGrp);
-    _qRel.copy(_qGrp).invert().multiply(_qHip);
-
-    // YXZ so the first component read out is the rotation about up.
-    _eRel.setFromQuaternion(_qRel, 'YXZ');
-
-    if (this.hipYaw0 === null) {
-      this.hipYaw0 = _eRel.y;      // the rest orientation; keep it
-      return;
-    }
-
-    /* _eRel.y already includes whatever the pivot is currently applying, so
-       subtracting the error drives it to zero rather than compounding. */
-    let err = _eRel.y - this.hipYaw0;
-    while (err >  Math.PI) err -= Math.PI * 2;
-    while (err < -Math.PI) err += Math.PI * 2;
-
-    this.pivot.rotation.y -= err;
   }
 
   /** Remote avatars ease toward the last received transform. */
@@ -1110,11 +954,31 @@ class Avatar {
    * so the label glides rather than snapping between frames.
    */
   stepTag(dt) {
-    this.stepBubbles(dt);
+    // The bubble rides above the tag, and needs tracking even for the local
+    // player, who has no name tag at all.
+    if (this.bubbleObj) {
+      // Fixed height, not this.tagY — see HEAD_TOP. A remote player carries a
+      // name tag under the bubble, so theirs needs the extra clearance.
+      this.bubbleObj.sprite.position.y =
+        HEAD_TOP + (this.tag ? TAG_CLEARANCE + BUBBLE_GAP : BUBBLE_GAP * 0.4);
+      this.bubbleObj.update(dt);
 
-    // A local player has no tag, and the bubbles no longer depend on the
-    // measurement, so there is nothing left to do for them here.
-    if (!this.tag) return;
+      // Once the last line has aged out, fall back to the dots if they have
+      // already started composing the next message.
+      if (this.bubbleObj.mode === null && this.typing) this.bubbleObj.showTyping();
+    }
+
+    if (!this.tag) {
+      // Still measure, so a local player's bubble clears their own head.
+      this.tagClock += dt;
+      if (this.tagClock > 0.08) {
+        this.tagClock = 0;
+        tagBox.setFromObject(this.model);
+        const top = tagBox.max.y - this.group.position.y;
+        if (Number.isFinite(top)) this.tagY = top + TAG_CLEARANCE;
+      }
+      return;
+    }
 
     this.tagClock += dt;
     if (this.tagClock > 0.08) {
@@ -1142,9 +1006,8 @@ class Avatar {
   }
 
   dispose() {
-    for (const b of this.bubbles) b.dispose();
-    this.bubbles.length = 0;
-    if (this.typingBubble) this.typingBubble.dispose();
+    clearTimeout(this.bubbleTimer);
+    if (this.bubbleObj) this.bubbleObj.dispose();
     if (this.tag) this.tag.element.remove();
     scene.remove(this.group);
   }
@@ -1281,15 +1144,7 @@ function stepCamera(dt) {
 
   if (camera.position.y < 0.4) camera.position.y = 0.4;
 
-  /* YXZ, not the default XYZ. Three's XYZ order builds the rotation as
-     Rx·Ry·Rz, which applies pitch *before* yaw — so once the camera is tilted
-     at all, turning swings it around a tilted axis and the horizon rolls. The
-     view slides sideways as you turn and the character appears to shift across
-     the frame. YXZ applies yaw first and pitch on top of it, which is the
-     orbit-camera convention and keeps the horizon level at any pitch.
-
-     Default pitch here is 0.26rad, so this was never not happening. */
-  camera.rotation.set(-pitch, yaw + Math.PI, 0, 'YXZ');
+  camera.rotation.set(-pitch, yaw + Math.PI, 0);
 }
 
 /* --------------------------------------------------------------------------
@@ -1377,10 +1232,11 @@ function bindInput() {
     document.addEventListener('pointerlockchange', () => {
       pointerLocked = document.pointerLockElement === renderer.domElement;
 
-      /* Chat no longer releases the lock, so reaching here while chatOpen
-         means something else took it — an Escape press, or the tab losing
-         focus. Close the bar rather than leaving it stranded over the menu. */
-      if (chatOpen) closeChat();
+      /* Opening chat releases the cursor on purpose. Without this guard the
+         handler cannot tell that apart from Escape, so pressing T unlocked the
+         pointer and the pause menu came up over the chat bar. This is also the
+         moment the browser hands focus back to the body, so take it back. */
+      if (chatOpen) { keys.clear(); focusChatInput(); return; }
 
       clickLayer.classList.toggle('hidden', pointerLocked);
 
@@ -1396,10 +1252,6 @@ function bindInput() {
 
   addEventListener('mousemove', e => {
     if (!pointerLocked) return;
-
-    // The lock is deliberately kept during chat, so the camera has to be held
-    // still here instead. This is what replaces the old exitPointerLock call.
-    if (chatOpen) return;
 
     // The first event after locking carries the jump from wherever the
     // cursor happened to be sitting.
@@ -1791,10 +1643,6 @@ function onHostMessage(conn, msg) {
     const avatar = ensureRemote(conn.peer, msg.n, msg.k);
     applyState(avatar, msg);
   } else if (msg.t === 'chat') {
-    // Enforced here, not just in the sender's client — a modified peer can
-    // ignore its own cooldown, but it cannot make the host relay the flood.
-    if (!allowChat(conn.peer)) return;
-
     const avatar = ensureRemote(conn.peer, msg.n);
     avatar.say(msg.text);
 
@@ -1830,10 +1678,6 @@ function onClientMessage(msg) {
     // connection eventually times out.
     onHostLost();
   } else if (msg.t === 'chat') {
-    // Applied again on receipt: the host does the room-wide limiting, but a
-    // client should not be at its mercy.
-    if (!allowChat(msg.id || 'host')) return;
-
     const avatar = msg.id === 'host'
       ? remotes.get('host') || ensureRemote('host', 'anon')
       : remotes.get(msg.id);
@@ -1986,7 +1830,6 @@ function applyState(avatar, s) {
 
 function dropPeer(id) {
   connections.delete(id);
-  chatBuckets.delete(id);          // else the map grows for the whole session
   const avatar = remotes.get(id);
   if (avatar) { avatar.dispose(); remotes.delete(id); }
   renderRoster();
@@ -2151,7 +1994,7 @@ addEventListener('beforeunload', () => teardownNetwork());
    -------------------------------------------------------------------------- */
 
 let chatOpen = false;
-const CHAT_HINT = 'Enter to send · Esc to cancel';
+let lastChatAt = 0;
 let typingSent = false;
 let typingIdle = null;
 
@@ -2181,7 +2024,6 @@ function setTypingState(on) {
 }
 
 let chatIdle = null;
-let chatText = '';      // the single source of truth for what is being typed
 
 /* The bar closes itself after a stretch of silence, so an abandoned compose
    box doesn't sit over the game forever. Every keystroke pushes it back. */
@@ -2190,57 +2032,26 @@ function touchChatIdle() {
   chatIdle = setTimeout(closeChat, CHAT_IDLE);
 }
 
-/* Paints chatText into the bar. The line is a div rather than an <input>, so
-   long messages wrap onto a second and third row instead of scrolling
-   sideways inside a fixed-width field. */
-function renderChatLine() {
-  el('chattext').textContent = chatText;
-  el('chatline').classList.toggle('empty', chatText.length === 0);
-  el('chatcount').textContent = chatText.length + '/' + CHAT_MAX;
-  el('chatsend').disabled = chatText.trim().length === 0;
+/* Enables the send arrow only when there is something to send, the way the
+   real thing does — an always-live button invites a tap that does nothing. */
+function syncSend() {
+  const cooling = performance.now() - lastChatAt < CHAT_COOLDOWN;
+  el('chatsend').disabled = cooling || el('chatinput').value.trim().length === 0;
 }
 
-function setChatText(next) {
-  chatText = next.slice(0, CHAT_MAX);
-  renderChatLine();
-  setTypingState(chatText.trim().length > 0);
-  touchChatIdle();
-}
+/* exitPointerLock() is asynchronous. The browser tears the lock down on a
+   later task and hands focus back to the document body when it finishes —
+   which is *after* the synchronous focus() call in openChat, so the field
+   quietly loses the caret a frame later. Typing then falls through to the
+   movement handler: the letters never appear and WASD walks the character
+   away instead. Re-assert focus across the next couple of frames. */
+function focusChatInput() {
+  const input = el('chatinput');
+  const grab = () => { if (chatOpen) input.focus({ preventScroll: true }); };
 
-/* --------------------------------------------------------------------------
-   Key capture
-
-   The compose bar does not use a focused <input> on desktop, and that is the
-   whole point. Focus was never reliable here: exitPointerLock() completes on a
-   later task and hands focus back to the document body afterwards, so the
-   caret kept getting pulled out of the field a frame after it was put there,
-   and keystrokes fell through to the movement handler. Reading keydown off the
-   window sidesteps focus entirely — the events arrive whether or not anything
-   is focused, and even while the pointer is still locked.
-
-   Touch is the exception. A phone has no physical keyboard, so there a real
-   (visually hidden) input is focused purely to summon the on-screen one, and
-   its value is mirrored into chatText.
-   -------------------------------------------------------------------------- */
-
-function onChatKey(e) {
-  if (!chatOpen) return;
-  if (IS_TOUCH) return;              // the hidden input drives the touch path
-
-  // Leave browser and OS shortcuts alone.
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-  if (e.key === 'Enter')     { e.preventDefault(); sendChat();  return; }
-  if (e.key === 'Escape')    { e.preventDefault(); closeChat(); return; }
-  if (e.key === 'Backspace') { e.preventDefault(); setChatText(chatText.slice(0, -1)); return; }
-
-  /* Every printable character reports a single-character key, including the
-     space bar and anything an international layout produces. Arrows, function
-     keys, Shift and the rest report longer names and are ignored. */
-  if (e.key.length === 1) {
-    e.preventDefault();
-    setChatText(chatText + e.key);
-  }
+  grab();
+  requestAnimationFrame(grab);
+  setTimeout(grab, 60);
 }
 
 function openChat() {
@@ -2248,30 +2059,22 @@ function openChat() {
   chatOpen = true;
 
   keys.clear();                        // don't keep running while typing
-
-  /* Note what is NOT here: the pointer lock is left engaged on desktop. That
-     one call was the source of both the pause menu appearing over the bar and
-     the focus being stolen mid-sentence. Mouse-look is suppressed while
-     chatOpen instead, so the camera still holds still. */
+  if (document.pointerLockElement) document.exitPointerLock();
 
   // A fresh box every time. Whatever was half-typed when the bar timed out is
-  // stale by now, and reopening onto an abandoned sentence is worse than
-  // starting clean.
-  chatText = '';
-  renderChatLine();
+  // stale by now, and reopening onto someone else's abandoned sentence is
+  // worse than starting clean.
+  const input = el('chatinput');
+  input.value = '';
+  syncSend();
 
-  clearTimeout(hintTimer);
-  el('chathint').textContent = CHAT_HINT;
-  el('chathint').classList.remove('warn');
+  // Reopening inside the cooldown still needs the arrow to come back on its
+  // own, without waiting for a keystroke to trigger the next syncSend.
+  const left = CHAT_COOLDOWN - (performance.now() - lastChatAt);
+  if (left > 0) armCooldownRelease(left);
 
   el('chatbar').classList.remove('hidden');
-
-  if (IS_TOUCH) {
-    const input = el('chatinput');
-    input.value = '';
-    input.focus({ preventScroll: true });
-  }
-
+  focusChatInput();
   touchChatIdle();
 }
 
@@ -2281,53 +2084,67 @@ function closeChat() {
   clearTimeout(chatIdle);
   setTypingState(false);
 
-  chatText = '';
-  renderChatLine();
+  el('chatinput').blur();
+  el('chatinput').value = '';
   el('chatbar').classList.add('hidden');
+  el('chatbar').classList.remove('cooling');
+  syncSend();
 
-  if (IS_TOUCH) {
-    el('chatinput').value = '';
-    el('chatinput').blur();            // let the on-screen keyboard drop
-  } else if (!pointerLocked && relockPointer) {
-    relockPointer();                   // only if something else took the lock
-  }
+  // Take the mouse back, but only on desktop — a phone never had the lock.
+  if (!IS_TOUCH && relockPointer) relockPointer();
 }
 
 function sendChat() {
-  const text = chatText.trim().slice(0, CHAT_MAX);
+  const input = el('chatinput');
+  const text = input.value.trim().slice(0, CHAT_MAX);
 
-  if (!text) { closeChat(); return; }
+  if (!text) { input.value = ''; closeChat(); return; }
 
-  /* Previously a too-fast message was silently discarded and the bar closed,
-     which read as the game eating your sentence. Now the text stays put, the
-     bar stays open, and the hint says how long is left — so the limit is
-     something you can see rather than something that just fails. */
-  const wait = chatWait('me');
+  /* The cooldown holds the message rather than dropping it. Silently eating a
+     line someone actually typed is the worse failure — they don't find out
+     until nobody answers. Refusing out loud and leaving the text in the box
+     means the only cost of talking too fast is waiting a beat. */
+  const now = performance.now();
+  const wait = CHAT_COOLDOWN - (now - lastChatAt);
+
   if (wait > 0) {
-    showChatHint(`Slow down — ${(wait / 1000).toFixed(1)}s`, true);
+    flashCooldown(wait);
+    touchChatIdle();
     return;
   }
 
-  allowChat('me');
+  input.value = '';
+  lastChatAt = now;
 
   if (local) local.say(text);
   broadcastChat(text);
+
+  // Every send closes the bar. T brings it back.
   closeChat();
 }
 
-let hintTimer = null;
+/* Marks the compose bar as rate-limited and counts the block down in place,
+   so a held Enter reads as "not yet" instead of as a dead key. */
+let cooldownTimer = null;
 
-/** Swaps the hint line under the bar, then restores the default. */
-function showChatHint(text, warn) {
-  const hint = el('chathint');
-  hint.textContent = text;
-  hint.classList.toggle('warn', !!warn);
+/** Re-enables the send arrow the moment the block lapses. */
+function armCooldownRelease(wait) {
+  clearTimeout(cooldownTimer);
+  cooldownTimer = setTimeout(() => {
+    el('chatbar').classList.remove('cooling');
+    if (chatOpen) syncSend();
+  }, Math.ceil(wait));
+}
 
-  clearTimeout(hintTimer);
-  hintTimer = setTimeout(() => {
-    hint.textContent = CHAT_HINT;
-    hint.classList.remove('warn');
-  }, 1400);
+function flashCooldown(wait) {
+  const bar = el('chatbar');
+
+  bar.classList.remove('cooling');
+  void bar.offsetWidth;                 // restart the nudge if it's already running
+  bar.classList.add('cooling');
+  el('chatsend').disabled = true;
+
+  armCooldownRelease(wait);
 }
 
 function broadcastChat(text) {
@@ -2345,39 +2162,50 @@ function broadcastChat(text) {
 }
 
 function bindChat() {
-  /* Capture phase, so the compose bar sees the key before anything else can
-     act on it or stop it propagating. */
-  addEventListener('keydown', onChatKey, true);
+  // Clicking the bar anywhere puts the caret back, so a stray click on the
+  // padding around the field never leaves you typing into nothing.
+  el('chatbar').addEventListener('mousedown', e => {
+    if (e.target === el('chatsend') || el('chatsend').contains(e.target)) return;
+    e.preventDefault();
+    focusChatInput();
+  });
 
-  // mousedown default is prevented so the press cannot move focus or, on a
-  // phone, dismiss the keyboard a frame before the send lands.
+  // mousedown, not click: the default would blur the input first, and on some
+  // browsers that closes the phone keyboard a frame before the send lands.
   el('chatsend').addEventListener('mousedown', e => e.preventDefault());
-  el('chatsend').addEventListener('click', e => { e.preventDefault(); sendChat(); });
+  el('chatsend').addEventListener('click', sendChat);
   el('chatsend').addEventListener('touchstart', e => {
     e.preventDefault();
     sendChat();
   }, { passive: false });
 
-  /* Touch only: the hidden field exists to raise the on-screen keyboard, and
-     its value is mirrored across. Reading .value rather than individual keys
-     is what makes autocorrect, prediction and swipe input work. */
-  const input = el('chatinput');
+  el('chatinput').addEventListener('input', () => {
+    setTypingState(el('chatinput').value.trim().length > 0);
+    syncSend();
+    touchChatIdle();
+  });
 
-  input.addEventListener('input', () => setChatText(input.value));
-
-  input.addEventListener('keydown', e => {
+  el('chatinput').addEventListener('keydown', e => {
     e.stopPropagation();
     touchChatIdle();
-    if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
+    if (e.key === 'Enter') sendChat();
     else if (e.key === 'Escape') closeChat();
   });
 
-  // Tapping the bar puts the keyboard back if it was dismissed.
-  el('chatbar').addEventListener('touchstart', e => {
-    if (!IS_TOUCH) return;
-    if (el('chatsend').contains(e.target)) return;
-    input.focus({ preventScroll: true });
-  }, { passive: true });
+  /* T, and only T, opens chat on desktop. The bar closes on every send, so
+     this is also the key you come back through after each message.
+
+     Enter used to open it too, and carried a trap worth naming: a browser
+     fires a click on whatever button currently holds focus when Enter is
+     pressed, so after leaving the pause menu with the mouse, Enter would
+     silently re-open it. T has no such conflict, which is why it is now the
+     single opener. The activeElement check keeps it from firing while the
+     player is typing their name on the title screen. */
+  addEventListener('keydown', e => {
+    if (chatOpen || !local) return;
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+    if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
+  });
 
   el('btn-chat').addEventListener('touchstart', e => {
     e.preventDefault();
@@ -2387,17 +2215,9 @@ function bindChat() {
 
   el('btn-chat').addEventListener('click', e => { e.preventDefault(); openChat(); });
 
-  /* T or Enter opens chat while playing. The activeElement check keeps either
-     from firing while the player is typing their name on the title screen. */
-  addEventListener('keydown', e => {
-    if (chatOpen || !local) return;
-    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
-    if (e.code === 'KeyT' || e.key === 'Enter') { e.preventDefault(); openChat(); }
-  });
-
-  /* On a phone the keyboard covers the bottom of the screen, including the bar
-     being typed into. visualViewport reports the space actually left visible,
-     so the bar can be lifted to sit just above it. */
+  /* On a phone the keyboard covers the bottom of the screen, including the
+     field being typed into. visualViewport reports the space actually left
+     visible, so the bar can be lifted to sit just above it. */
   if (window.visualViewport) {
     const lift = () => {
       if (!chatOpen) return;
@@ -2606,3 +2426,4 @@ el('btn-leave').addEventListener('touchstart', e => {
   e.stopPropagation();
   leaveGame();
 }, { passive: false });
+

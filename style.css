@@ -371,87 +371,28 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
   margin: 0 auto;
 }
 
-#chatline {
-  /* The fix for the stretching: a wrapping block, not a single-line field.
-     Text that outgrows the width moves to a new row and the pill grows
-     downward. It can never widen, because the width is not content-driven. */
+#chatinput {
   width: 100%;
-  min-height: 38px;
-  max-height: 96px;
-  overflow-y: auto;
+  /* Right padding clears the arrow, which is positioned over the field. */
   padding: 8px 40px 8px 15px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 16px;
+  font-size: 16px;          /* 16px or smaller and iOS zooms the page on focus */
   line-height: 1.35;
   color: #fff;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, .22);
   border-radius: 19px;
-  white-space: pre-wrap;      /* keep runs of spaces the player typed */
-  overflow-wrap: anywhere;    /* a 150-character word still has to fit */
-  cursor: text;
+  outline: none;
 }
 
-/* Placeholder. A pseudo-element rather than real text, so it can never end up
-   in chatText or be sent by accident. */
-#chatline.empty #chattext::after {
-  content: "Message";
-  color: #8e8e93;
-}
-
-/* The caret is drawn rather than native, since there is no focused field to
-   supply one. */
-#chatcaret {
-  display: inline-block;
-  width: 2px;
-  height: 1.05em;
-  margin-left: 1px;
-  vertical-align: text-bottom;
-  background: #0a84ff;
-  animation: caret 1.06s steps(1, end) infinite;
-}
-
-@keyframes caret { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
-
-.meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 5px;
-  padding: 0 6px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 11px;
-  color: #6f7278;
-}
-
-#chatcount { font-variant-numeric: tabular-nums; }
-
-/* The cooldown notice. Amber rather than the error red used on the title
-   screen: nothing has gone wrong, you are just early. */
-#chathint.warn { color: #ffb340; }
-
-/* Touch only, and never actually seen: focused to summon the on-screen
-   keyboard so autocorrect and swipe typing keep working. Kept on screen at
-   1px rather than display:none, because a hidden field cannot take focus. */
-#chatinput {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  font-size: 16px;            /* 16px or smaller and iOS zooms the page */
-  pointer-events: none;
-}
+#chatinput::placeholder { color: #8e8e93; }
+#chatinput:focus { border-color: rgba(255, 255, 255, .34); }
 
 #chatsend {
   position: absolute;
   right: 4px;
-  /* Pinned to the bottom row rather than centred, so it stays beside the last
-     line as the pill grows taller. */
-  bottom: 4px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 30px;
   height: 30px;
   padding: 0;
@@ -473,6 +414,20 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
 }
 
 #chatsend:not(:disabled):active { background: #0060df; }
+
+/* Rate limited. The message stays in the field — the border warms and the
+   pill nudges once, which is enough to read as "not yet" without stealing
+   the eye away from the game for a message that is only a beat late. */
+#chatbar.cooling #chatinput {
+  border-color: var(--error);
+  animation: chat-nudge .22s ease;
+}
+
+@keyframes chat-nudge {
+  0%, 100% { transform: translateX(0); }
+  30%      { transform: translateX(-4px); }
+  70%      { transform: translateX(4px); }
+}
 
 #chatsend svg {
   width: 17px;
@@ -755,7 +710,3 @@ body.playing {
   * { transition: none !important; }
 }
 
-/* The drawn caret is motion; honour the preference without hiding it. */
-@media (prefers-reduced-motion: reduce) {
-  #chatcaret { animation: none; opacity: 1; }
-}
