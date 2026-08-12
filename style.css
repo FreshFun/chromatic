@@ -341,6 +341,149 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
 
 #btn-leave:hover { border-color: var(--error); }
 
+/* ------------------------------------------------------------------ chat */
+
+/* The compose bar is the one part of the interface that deliberately breaks
+   the monospace house style. The speech bubbles in the world are already iOS
+   blue, and a chunky terminal input under them looked like two different
+   programs sharing a screen. This uses the system face, a pill, and the send
+   arrow tucked inside the right end of the field.
+
+   Sits above the touch layer so the arrow stays tappable, but below the pause
+   overlay, which should always win. */
+#chatbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9;
+  padding: 8px 10px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  background: rgba(20, 20, 22, .84);
+  border-top: 1px solid rgba(255, 255, 255, .10);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+.compose {
+  position: relative;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+#chatline {
+  /* The fix for the stretching: a wrapping block, not a single-line field.
+     Text that outgrows the width moves to a new row and the pill grows
+     downward. It can never widen, because the width is not content-driven. */
+  width: 100%;
+  min-height: 38px;
+  max-height: 96px;
+  overflow-y: auto;
+  padding: 8px 40px 8px 15px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.35;
+  color: #fff;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 19px;
+  white-space: pre-wrap;      /* keep runs of spaces the player typed */
+  overflow-wrap: anywhere;    /* a 150-character word still has to fit */
+  cursor: text;
+}
+
+/* Placeholder. A pseudo-element rather than real text, so it can never end up
+   in chatText or be sent by accident. */
+#chatline.empty #chattext::after {
+  content: "Message";
+  color: #8e8e93;
+}
+
+/* The caret is drawn rather than native, since there is no focused field to
+   supply one. */
+#chatcaret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: #0a84ff;
+  animation: caret 1.06s steps(1, end) infinite;
+}
+
+@keyframes caret { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+
+.meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 5px;
+  padding: 0 6px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11px;
+  color: #6f7278;
+}
+
+#chatcount { font-variant-numeric: tabular-nums; }
+
+/* The cooldown notice. Amber rather than the error red used on the title
+   screen: nothing has gone wrong, you are just early. */
+#chathint.warn { color: #ffb340; }
+
+/* Touch only, and never actually seen: focused to summon the on-screen
+   keyboard so autocorrect and swipe typing keep working. Kept on screen at
+   1px rather than display:none, because a hidden field cannot take focus. */
+#chatinput {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;            /* 16px or smaller and iOS zooms the page */
+  pointer-events: none;
+}
+
+#chatsend {
+  position: absolute;
+  right: 4px;
+  /* Pinned to the bottom row rather than centred, so it stays beside the last
+     line as the pill grows taller. */
+  bottom: 4px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: #0a84ff;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background .14s, opacity .14s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Greyed rather than hidden, so the field never changes width mid-sentence. */
+#chatsend:disabled {
+  background: #3a3a3c;
+  opacity: 1;
+  cursor: default;
+}
+
+#chatsend:not(:disabled):active { background: #0060df; }
+
+#chatsend svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* ------------------------------------------------------- floating name tag */
 
 /* Rendered as real DOM through CSS2DRenderer, so tags stay legible instead of
@@ -509,7 +652,7 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
 /* ---------------------------------------------------- touch controls */
 
 /* The layer itself is transparent and passes touches through; only the
-   stick and the jump button capture them. */
+   stick, chat and jump buttons capture them. */
 #touch {
   position: fixed;
   inset: 0;
@@ -563,14 +706,39 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
   color: #0b0d10;
 }
 
+/* Sits above jump, out of the thumb's arc, and is smaller because chat is the
+   rarer action of the two. */
+#btn-chat {
+  position: absolute;
+  right: 36px;
+  bottom: 142px;
+  width: 62px;
+  height: 62px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+  background: rgba(8, 9, 11, .42);
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#btn-chat:active { background: rgba(232, 237, 243, .82); }
+
 /* On a phone the keyboard hint is noise, and the safe area keeps the
    controls clear of the home indicator. */
 body.touch #hud { display: none; }
 
 body.touch #btn-jump { bottom: calc(40px + env(safe-area-inset-bottom)); }
+body.touch #btn-chat { bottom: calc(142px + env(safe-area-inset-bottom)); }
 
 body.touch #roomtag { top: calc(14px + env(safe-area-inset-top)); }
 body.touch #roster  { top: calc(14px + env(safe-area-inset-top)); }
+
+/* The chat button is touch-only; a desktop player presses T. */
+body:not(.touch) #btn-chat { display: none; }
 
 /* Stops the browser treating a control drag as a page scroll or a
    double-tap zoom while the game is running. */
@@ -585,4 +753,9 @@ body.playing {
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
+}
+
+/* The drawn caret is motion; honour the preference without hiding it. */
+@media (prefers-reduced-motion: reduce) {
+  #chatcaret { animation: none; opacity: 1; }
 }
