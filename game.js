@@ -15,7 +15,7 @@ import { MODELS, PROP_MODELS, SOUNDS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v46 wood';
+const BUILD = 'v47 bodies';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -1499,8 +1499,12 @@ function stepLocal(dt) {
   if (down && !spaceWasDown) local.startJump();
   spaceWasDown = down;
 
-  // Before gravity, so stepJump has this frame's floor height to clamp to.
-  resolveCollisions(local);
+  /* Bodies first, then props, both before gravity so stepJump has this
+     frame's floor to clamp to. Order matters only in that the player push can
+     move you into a prop, and the prop pass then has the chance to move you
+     back out; the reverse would leave you inside one. */
+  const bodyFloor = resolvePlayers(local);
+  resolveCollisions(local, true, bodyFloor);
 
   local.stepJump(dt);
   local.stepAnimation(dt);
@@ -2060,6 +2064,78 @@ const collideVec = new THREE.Vector3();
  * of the feet is treated as floor and skipped for pushing, so you step up
  * onto it instead of being stopped by its side.
  */
+/* --------------------------------------------------------------------------
+   Player against player
+
+   Resolved by each client for itself, with no authority involved.
+
+   That is the useful property of an equal, symmetric contact: both machines
+   compute the same overlap from the same two positions, and each moves only
+   the body it owns. Nobody has to be told where anyone ended up, so there is
+   no packet, no round trip and nothing to reconcile — which matters, because
+   bodies touch constantly and a networked answer would show up as rubber
+   banding every time two people brushed past each other.
+
+   Each side steps out by half the overlap, and the two halves add up to the
+   full separation. Moving out by the whole of it on both machines would push
+   twice as far as needed and read as people repelling each other.
+   -------------------------------------------------------------------------- */
+
+const PLAYER_PUSH_SKIN = 0.002;
+
+function resolvePlayers(avatar) {
+  if (!remotes.size) return 0;
+
+  const pos = avatar.group.position;
+  const span = PLAYER_RADIUS * 2;
+  let floor = 0;
+
+  /* On the way up, bodies stop blocking — the same exemption props get, and
+     needed for the same reason. Climbing onto someone's head means being
+     beside them while still below it, which is exactly when the side counts
+     as a wall; without this you are pushed clear before you ever get high
+     enough to stand on them. Coming down, contact returns. */
+  const rising = !avatar.grounded && avatar.velY > 0;
+
+  for (const other of remotes.values()) {
+    // In pieces, so there is no body to walk into.
+    if (!other.group.visible) continue;
+
+    const o = other.group.position;
+    const top = o.y + PLAYER_HEIGHT;
+
+    const dx = pos.x - o.x;
+    const dz = pos.z - o.z;
+    const dist = Math.hypot(dx, dz);
+
+    /* Standing on someone's head. Checked before the push, for the same
+       reason the prop version is: a body you are on top of is a surface, and
+       testing overlap first would shove you off it. */
+    if (dist < PLAYER_RADIUS && top <= pos.y + STEP_UP) {
+      floor = Math.max(floor, top);
+      continue;
+    }
+
+    if (dist >= span) continue;                       // not touching
+    if (pos.y >= top - 0.02) continue;                // above them
+    if (pos.y + PLAYER_HEIGHT <= o.y) continue;       // below them
+    if (rising) continue;                             // climbing onto them
+
+    const step = (span - dist) * 0.5 + PLAYER_PUSH_SKIN;
+
+    if (dist < 1e-4) {
+      // Exactly on top of each other, which happens when two people spawn on
+      // the same spot. No direction to separate along, so pick one.
+      pos.x += step;
+    } else {
+      pos.x += (dx / dist) * step;
+      pos.z += (dz / dist) * step;
+    }
+  }
+
+  return floor;
+}
+
 /* Somewhere to throw away the corrections when an avatar is being resolved
    only so that it can shove things. */
 const pushScratch = new THREE.Vector3();
@@ -2073,9 +2149,13 @@ const pushScratch = new THREE.Vector3();
  * same overlap test. With move off, the corrections are written to a scratch
  * vector and dropped; only the shoves survive.
  */
-function resolveCollisions(avatar, move = true) {
+function resolveCollisions(avatar, move = true, floorStart = 0) {
   const pos = move ? avatar.group.position : pushScratch.copy(avatar.group.position);
-  let floor = 0;
+
+  /* Seeded with the height another player's head already provided, so the two
+     passes compete for the highest surface rather than the later one wiping
+     out the earlier. */
+  let floor = floorStart;
 
   /* A client resolves itself against props so it never walks through one,
      but does not get to move them — the authority owns that, and two
