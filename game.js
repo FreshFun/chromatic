@@ -15,7 +15,7 @@ import { MODELS, PROP_MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v43 net push';
+const BUILD = 'v44 stacking';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -2481,7 +2481,16 @@ function simulateProps(dt) {
     if (heldProp && heldProp.id === rec.id) { rec.asleep = false; continue; }
     if (rec.holdUntil > now) { rec.asleep = false; continue; }
 
-    if (rec.asleep) continue;
+    /* A sleeping prop still has to notice the floor moving out from under
+       it. Pulling a crate from the bottom of a stack should drop what was on
+       top, and nothing else would ever wake them. */
+    if (rec.asleep) {
+      if (rec.group.position.y > propSupport(rec, propShape(rec)) + 0.02) {
+        rec.asleep = false;
+      } else {
+        continue;
+      }
+    }
 
     const pos = rec.group.position;
 
@@ -2491,13 +2500,14 @@ function simulateProps(dt) {
     pos.y += rec.vel.y * dt;
     pos.z += rec.vel.z * dt;
 
-    /* Ground height from the prop's *current* pose, not from its bind-pose
-       half-height. A crate tipped onto its corner reaches lower than a crate
+    /* Where this prop comes to rest: the ground, or the top of whatever it
+       is sitting on.
+
+       Derived from the prop's *current* pose rather than its bind-pose
+       half-height. A crate tipped onto its corner reaches lower than one
        sitting flat, and using the flat figure buried it in the floor up to a
        fifth of its size while it toppled. */
-    const rest = rec.collider === 'sphere'
-      ? rec.rest
-      : propShape(rec).ey - rec.centre.y;
+    const rest = propSupport(rec, propShape(rec));
 
     let onGround = false;
 
@@ -2768,6 +2778,87 @@ function rightProp(rec, dt) {
   rec.asleep = false;
 }
 
+/* --------------------------------------------------------------------------
+   Stacking
+
+   Props rest on each other, not just on the ground.
+
+   Two things had to change for this. The obvious one is that a prop needs to
+   look for a surface underneath it rather than assuming y=0. The less obvious
+   one is that separation had to learn about height at all: it compared
+   footprints in plan and nothing else, so a crate sitting neatly on another
+   crate registered as a full overlap and got shoved out from under itself.
+   That is what the flinging was — not physics being violent, but the solver
+   refusing to believe two objects could occupy the same ground at different
+   heights.
+   -------------------------------------------------------------------------- */
+
+const STACK_TOLERANCE = 0.12;   // how far below a prop still counts as support
+const shapeS = { round: false, ex: 0, ey: 0, ez: 0, r: 0 };
+
+/** True when two props overlap looking straight down. */
+function overlapInPlan(ax, az, sa, bx, bz, sb) {
+  const dx = ax - bx;
+  const dz = az - bz;
+
+  if (sa.round && sb.round) {
+    const gap = sa.r + sb.r;
+    return dx * dx + dz * dz < gap * gap;
+  }
+
+  if (!sa.round && !sb.round) {
+    return Math.abs(dx) < sa.ex + sb.ex && Math.abs(dz) < sa.ez + sb.ez;
+  }
+
+  // Round against box: nearest point on the box to the circle's centre.
+  const box = sa.round ? sb : sa;
+  const rad = sa.round ? sa.r : sb.r;
+  const px = sa.round ? dx : -dx;
+  const pz = sa.round ? dz : -dz;
+
+  const qx = px - Math.max(-box.ex, Math.min(box.ex, px));
+  const qz = pz - Math.max(-box.ez, Math.min(box.ez, pz));
+
+  return qx * qx + qz * qz < rad * rad;
+}
+
+/**
+ * The highest surface a prop can come to rest on, ground included.
+ *
+ * Only surfaces already at or below the prop count, within a small tolerance.
+ * Without that limit a prop would snap up onto the top of anything it merely
+ * overlapped, so walking a crate into a stack would teleport it to the summit
+ * instead of bumping into it.
+ */
+function propSupport(rec, sh) {
+  const groundRest = rec.collider === 'sphere'
+    ? rec.rest
+    : sh.ey - rec.centre.y;
+
+  let best = groundRest;
+
+  const bottom = rec.group.position.y + rec.centre.y - sh.ey;
+
+  for (const other of props.values()) {
+    if (other === rec || other.collider === 'none') continue;
+    if (heldProp && heldProp.id === other.id) continue;
+
+    Object.assign(shapeS, propShape(other));
+
+    const top = other.group.position.y + other.centre.y + shapeS.ey;
+    if (top > bottom + STACK_TOLERANCE) continue;      // not underneath us
+
+    if (!overlapInPlan(
+      rec.group.position.x, rec.group.position.z, sh,
+      other.group.position.x, other.group.position.z, shapeS)) continue;
+
+    const rest = top + sh.ey - rec.centre.y;
+    if (rest > best) best = rest;
+  }
+
+  return best;
+}
+
 /**
  * Keeps props from sharing space.
  *
@@ -2799,6 +2890,19 @@ function separateProps(list, dt) {
       if (pairVec.lengthSq() >= rough * rough) continue;
 
       const shB = propShape(b);
+
+      /* Height check first. Two props at the same spot but different heights
+         are stacked, not colliding, and pushing them apart is exactly the
+         flinging that made stacking impossible. The tolerance lets a prop
+         that has just settled onto another still count as resting rather than
+         as overlapping by a hair. */
+      const aBot = a.group.position.y + a.centre.y - shapeA.ey;
+      const aTop = a.group.position.y + a.centre.y + shapeA.ey;
+      const bBot = b.group.position.y + b.centre.y - shB.ey;
+      const bTop = b.group.position.y + b.centre.y + shB.ey;
+
+      if (aBot >= bTop - STACK_TOLERANCE) continue;   // a rests on b
+      if (bBot >= aTop - STACK_TOLERANCE) continue;   // b rests on a
 
       let nx = 0, nz = 0, overlap = 0;
 
@@ -3875,13 +3979,13 @@ function onHostMessage(conn, msg) {
     conn.send({ t: 'prop-list', props: propSnapshot() });
   } else if (msg.t === 'state') {
     const avatar = ensureRemote(conn.peer, msg.n, msg.k);
-    applyState(avatar, msg);
+    if (avatar) applyState(avatar, msg);
   } else if (msg.t === 'chat') {
     // Trimmed here as well as on display: the host is the one relaying, and a
     // patched client shouldn't get to push a longer line into the room.
     const text = String(msg.text || '').slice(0, CHAT_MAX);
     const avatar = ensureRemote(conn.peer, msg.n);
-    avatar.say(text);
+    if (avatar) avatar.say(text);
 
     // Relay to every other client. The sender already showed it locally, so
     // echoing it back would double the bubble.
@@ -3975,8 +4079,12 @@ function onClientMessage(msg) {
 
     for (const s of msg.players) {
       if (s.id === myId) continue;
+
+      const avatar = ensureRemote(s.id, s.n, s.k);
+      if (!avatar) continue;              // that entry is us
+
       seen.add(s.id);
-      applyState(ensureRemote(s.id, s.n, s.k), s);
+      applyState(avatar, s);
     }
 
     // Anyone missing from the snapshot has left.
@@ -4091,6 +4199,21 @@ function stopLobbyPolling() {
 }
 
 function ensureRemote(id, name, skin) {
+  /* Never build an avatar for ourselves. Two paths lead here with our own id
+     and both produce a twin standing where we are:
+
+     The welcome packet carries the id the host knows us by, and until it is
+     processed myId is null — so a snapshot that arrives first has nothing to
+     compare against and we appear in our own remote list.
+
+     And after an unclean disconnect the host keeps our old avatar until it
+     times out, while our reconnect gives us a fresh peer id. The stale entry
+     no longer matches myId, so it renders as a second, motionless copy of us
+     until the host prunes it. Checking the live peer id as well catches that
+     one, since it is the id the host is still broadcasting. */
+  if (id === myId) return null;
+  if (peer && id === peer.id) return null;
+
   let avatar = remotes.get(id);
 
   if (!avatar) {
