@@ -784,18 +784,66 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
 
 #btn-chat:active { background: rgba(232, 237, 243, .82); }
 
+/* Same pill as chat, stacked above it. */
+#btn-net {
+  position: absolute;
+  right: 36px;
+  bottom: 204px;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  font-size: 24px;
+  line-height: 1;
+  background: rgba(8, 9, 11, .42);
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#btn-net:active { background: rgba(232, 237, 243, .82); }
+
+/* Left side, opposite jump — carrying and jumping want different thumbs. */
+#btn-grab {
+  position: absolute;
+  left: 26px;
+  bottom: 46px;
+  width: 74px;
+  height: 74px;
+  padding: 0;
+  font-size: 10px;
+  letter-spacing: .14em;
+  color: var(--text);
+  background: rgba(8, 9, 11, .42);
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#btn-grab:active {
+  background: rgba(232, 237, 243, .82);
+  color: #0b0d10;
+}
+
 /* On a phone the keyboard hint is noise, and the safe area keeps the
    controls clear of the home indicator. */
 body.touch #hud { display: none; }
 
 body.touch #btn-jump { bottom: calc(40px + env(safe-area-inset-bottom)); }
 body.touch #btn-chat { bottom: calc(142px + env(safe-area-inset-bottom)); }
+body.touch #btn-net  { bottom: calc(204px + env(safe-area-inset-bottom)); }
+body.touch #btn-grab { bottom: calc(46px + env(safe-area-inset-bottom)); }
 
 body.touch #roomtag { top: calc(14px + env(safe-area-inset-top)); }
 body.touch #roster  { top: calc(14px + env(safe-area-inset-top)); }
 
-/* The chat button is touch-only; a desktop player presses T. */
-body:not(.touch) #btn-chat { display: none; }
+/* Touch-only; a desktop player has keys for all three. */
+body:not(.touch) #btn-chat,
+body:not(.touch) #btn-net,
+body:not(.touch) #btn-grab { display: none; }
 
 /* Stops the browser treating a control drag as a page scroll or a
    double-tap zoom while the game is running. */
@@ -815,5 +863,137 @@ body.playing {
      the only thing signalling that someone is mid-message, and a static row
      of grey circles carries none of that. */
   .bubble { animation: none !important; }
+  #net-grid.cooling { animation: none !important; }
 }
 
+
+/* ---------------------------------------------------------------------------
+   The Internet
+   --------------------------------------------------------------------------- */
+
+#internet {
+  position: fixed;
+  inset: 0;
+  z-index: 10;                 /* over the HUD, under the pause layer */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(6, 8, 11, .72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+#internet.hidden { display: none; }
+
+.net-panel {
+  width: min(560px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 18px 14px;
+  background: rgba(14, 17, 21, .94);
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .55);
+}
+
+.net-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.net-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .22em;
+  color: var(--text);
+}
+
+#btn-net-close {
+  padding: 4px 9px;
+  font-size: 10px;
+  letter-spacing: .1em;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#btn-net-close:hover { color: var(--text); border-color: rgba(255, 255, 255, .3); }
+
+/* auto-fill rather than auto-fit, so the tiles keep their size on a wide
+   panel instead of stretching into letterboxes when there are only a few. */
+#net-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 8px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.net-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 8px 11px;
+  font-size: 11px;
+  letter-spacing: .06em;
+  color: var(--text);
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.net-item:hover {
+  background: rgba(255, 255, 255, .1);
+  border-color: rgba(255, 255, 255, .24);
+}
+
+.net-item:active { transform: translateY(1px); }
+
+/* Stands in for a thumbnail. Rendering a live preview of each prop would mean
+   a second scene and a render target per tile, which is a lot of machinery to
+   distinguish nine shapes that are already named underneath. */
+.net-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  box-shadow: inset 0 -6px 12px rgba(0, 0, 0, .35),
+              inset 0 4px 8px rgba(255, 255, 255, .22);
+}
+
+.net-foot {
+  margin: 12px 0 0;
+  font-size: 10px;
+  letter-spacing: .04em;
+  color: var(--dim);
+  text-align: center;
+}
+
+.net-foot b { color: var(--text); font-weight: 600; }
+
+
+/* Rate limited. The tiles grey out and the panel nudges once — enough to read
+   as "not yet" without a modal or a number ticking down. */
+#net-grid.cooling {
+  animation: net-nudge .22s ease;
+}
+
+#net-grid.cooling .net-item {
+  opacity: .38;
+  pointer-events: none;
+}
+
+@keyframes net-nudge {
+  0%, 100% { transform: translateX(0); }
+  30%      { transform: translateX(-5px); }
+  70%      { transform: translateX(5px); }
+}

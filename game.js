@@ -2,8 +2,10 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { MODELS, toBuffer } from './assets.js';
+import { MODELS, PROP_MODELS, toBuffer } from './assets.js';
 
 
 /* ==========================================================================
@@ -13,7 +15,7 @@ import { MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v31 pixel outlines';
+const BUILD = 'v42 climb';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -53,7 +55,12 @@ const RUN_ANIM_MAX  = 1.5;
 const CROUCH_END  = 0.42;
 const LAND_AT     = 1.15;
 const JUMP_RATE   = 1.45;
-const JUMP_HEIGHT = 0.45;
+/* 0.62 rather than 0.45. The old figure plus the step height topped out at
+   0.87m, which cleared a crate and nothing else — the 1.0m block and the
+   1.1m barrel were unreachable, so half the catalog could not be climbed.
+   Air time is fixed by the animation, so raising this raises gravity to
+   match and the jump reads as snappier rather than floatier. */
+const JUMP_HEIGHT = 0.62;
 
 const LAUNCH_TIME    = CROUCH_END / JUMP_RATE;
 const TOUCHDOWN_TIME = LAND_AT / JUMP_RATE;
@@ -64,12 +71,12 @@ const JUMP_SPEED     = -GRAVITY * AIR_TIME / 2;
 const JUMP_FADE_IN  = 20;
 const JUMP_FADE_OUT = 7;
 
-/* Look. PIXEL_SIZE 3 gives a chunkier grid than 2 — blocky enough to read as
-   deliberately low-res while curved edges still hold their shape. This used
-   to be capped by legibility, since speech bubbles were sprites living inside
-   this same buffer; now that chat is DOM, the world is free to get as coarse
-   as it likes. Set to 1 for a clean render with no pixelation at all. */
-const PIXEL_SIZE = 3;
+/* Look. 2 rather than 3: at 3 the blocks were large enough that the rounded
+   limbs turned into visible staircases and the figure lost its shape, which
+   is the opposite of the reference — that one is smooth enough to read as a
+   solid form with only a hint of grid. Set to 1 for a clean render with no
+   pixelation at all. */
+const PIXEL_SIZE = 2;
 
 /* Skins. Colour alone isn't enough to make a tinted metal read correctly:
    a fully metallic surface shows almost nothing but its reflections, so a red
@@ -77,18 +84,18 @@ const PIXEL_SIZE = 3;
    metalness, letting the coloured ones keep enough diffuse to actually look
    red or green while Metal and Gold stay properly reflective.
 
-   Roughness is what controls the size of the highlight. These sit low, around
-   0.15, because roughness scatters the reflection: at 0.32 the sun's
-   reflection smeared across half the head as a soft gradient, and only down
-   here does it tighten into the distinct circle it should be. Raise these to
-   soften the highlight, lower them to sharpen it further. */
+   Roughness controls the size of the highlight. These sit around 0.2 — low
+   enough that the sun still lands as a defined highlight rather than a smear,
+   but not so low that it collapses to a hard dot. The reference has a broad
+   soft sheen running down the arm and across the shoulder, which is a
+   slightly rougher surface than a mirror. Raise to soften, lower to sharpen. */
 const SKINS = [
-  { id: 'metal',   name: 'Metal',   color: 0xa9b1bb, metal: 0.62, rough: 0.16 },
-  { id: 'crimson', name: 'Crimson', color: 0xb42f2f, metal: 0.48, rough: 0.15 },
-  { id: 'cobalt',  name: 'Cobalt',  color: 0x2a55c0, metal: 0.48, rough: 0.15 },
-  { id: 'emerald', name: 'Emerald', color: 0x1d9160, metal: 0.48, rough: 0.15 },
-  { id: 'gold',    name: 'Gold',    color: 0xd8a52c, metal: 0.78, rough: 0.14 },
-  { id: 'dorfic',  name: 'Dorfic',  color: 0xdc6a24, metal: 0.50, rough: 0.15 }
+  { id: 'metal',   name: 'Metal',   color: 0xa9b1bb, metal: 0.62, rough: 0.21 },
+  { id: 'crimson', name: 'Crimson', color: 0xb42f2f, metal: 0.48, rough: 0.20 },
+  { id: 'cobalt',  name: 'Cobalt',  color: 0x2a55c0, metal: 0.48, rough: 0.20 },
+  { id: 'emerald', name: 'Emerald', color: 0x1d9160, metal: 0.48, rough: 0.20 },
+  { id: 'gold',    name: 'Gold',    color: 0xd8a52c, metal: 0.78, rough: 0.19 },
+  { id: 'dorfic',  name: 'Dorfic',  color: 0xdc6a24, metal: 0.50, rough: 0.20 }
 ];
 
 /* How strongly the environment reflects off every skin.
@@ -98,9 +105,13 @@ const SKINS = [
    anywhere in particular — a broad source spreads its reflection over the
    whole surface. Most of the shine now comes from the sun instead, which is
    effectively a point and therefore leaves a small round highlight where it
-   catches the curve of the head. Raise this for a softer, more ambient look;
-   lower it for harder contrast. */
-const ENV_INTENSITY = 0.5;
+   catches the curve of the head.
+
+   Back up from 0.5, though. Cutting it that far crushed the shadow side of
+   the body to near black, and the reference does not do that — its dark side
+   still reads as a lit surface with the form visible in it. Some fill has to
+   come from somewhere, and the environment is the natural place. */
+const ENV_INTENSITY = 0.9;
 
 /* Silhouette. Drawn as an inverted hull: a second copy of the model with its
    faces flipped and its vertices pushed out along their normals, so it is
@@ -120,7 +131,7 @@ const ENV_INTENSITY = 0.5;
    pixel of edge no matter its thickness or its distance, which reads as a
    drawn line rather than as mass. It also matches how the rest of the render
    behaves — one buffer pixel is one visible block. */
-const OUTLINE_PIXELS = 1.0;
+const OUTLINE_PIXELS = 0.85;
 
 /* NDC covered by one buffer pixel, shared by every outline material and
    refreshed whenever the drawing buffer is resized. One object handing its
@@ -136,7 +147,7 @@ const outlinePixel = { value: new THREE.Vector2(0.002, 0.002) };
    here. Hue is kept, lightness cut hard, and saturation pushed up slightly to
    compensate — dark colours read as washed out otherwise, and the gold in
    particular goes muddy brown without it. */
-const OUTLINE_LIGHTNESS = 0.35;   // fraction of the skin's own lightness
+const OUTLINE_LIGHTNESS = 0.55;   // fraction of the skin's own lightness
 const OUTLINE_SAT       = 1.25;
 
 const outlineHSL = {};
@@ -299,6 +310,9 @@ async function loadAssets() {
     barFill.style.width = Math.round(((i + 1) / keys.length) * 100) + '%';
   }
 
+  await loadPropModels();
+  measureProps();
+
   return out;
 }
 
@@ -429,13 +443,13 @@ function buildScene() {
      every direction at once, which is exactly what washes a highlight out —
      it raises the floor until the bright spot has nothing to be bright
      against. */
-  scene.add(new THREE.HemisphereLight(0xe4eefb, 0x7a7466, 0.55));
+  scene.add(new THREE.HemisphereLight(0xe4eefb, 0x7a7466, 0.85));
 
   /* The sun does most of the work now, and it is the thing making the round
      highlight on the head. A directional light is a single direction, so on
      a low-roughness curved surface its reflection is a small disc rather
      than a spread. */
-  sun = new THREE.DirectionalLight(0xfff4e2, 3.4);
+  sun = new THREE.DirectionalLight(0xfff4e2, 3.0);
   sun.position.set(12, 20, 8);
   sun.castShadow = true;
   sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
@@ -980,6 +994,10 @@ function buildOutline(root, material) {
     shell.quaternion.copy(src.quaternion);
     shell.scale.copy(src.scale);
 
+    /* Invisible to picking. The shell sits a pixel outside the real mesh, so
+       without this it would be the first thing the grab ray hit. */
+    shell.raycast = () => {};
+
     // The real mesh already casts the shadow; a second one at the same place
     // would only thicken and darken it.
     shell.castShadow = false;
@@ -1064,6 +1082,7 @@ class Avatar {
     this.jumpPhase = 'none';
     this.jumpClock = 0;
     this.jumpBlend = 0;
+    this.floorY = 0;          // surface under the feet; props raise it
 
     // Footstep state. footHalf is which half of the run cycle the playhead
     // was in last frame; a change is a footfall.
@@ -1171,18 +1190,31 @@ class Avatar {
       }
     }
 
+    /* The ground is no longer always y=0. floorY is whatever surface is
+       currently under the feet — the world, or the top of a prop — and is
+       recomputed each frame before this runs. */
+    const floorY = this.floorY || 0;
+
     // Gravity only while airborne — applying it on the ground makes the
     // character sink and get clamped every frame, which feeds jitter upward.
     if (!this.grounded) {
       this.velY += GRAVITY * dt;
       this.group.position.y += this.velY * dt;
 
-      if (this.group.position.y <= 0) {
-        this.group.position.y = 0;
+      if (this.group.position.y <= floorY) {
+        this.group.position.y = floorY;
         this.velY = 0;
         this.grounded = true;
         sfx.land(this.group.position);
       }
+    } else if (this.group.position.y > floorY + 0.02) {
+      // The prop you were standing on moved or was deleted. Start falling
+      // rather than hanging in the air where it used to be.
+      this.grounded = false;
+    } else {
+      // Riding a surface that rose under you — a carried prop lifted from
+      // below. Follow it rather than clipping through.
+      this.group.position.y = floorY;
     }
   }
 
@@ -1413,6 +1445,9 @@ function stepLocal(dt) {
   if (down && !spaceWasDown) local.startJump();
   spaceWasDown = down;
 
+  // Before gravity, so stepJump has this frame's floor height to clamp to.
+  resolveCollisions(local);
+
   local.stepJump(dt);
   local.stepAnimation(dt);
   local.stepFootsteps();
@@ -1472,6 +1507,1760 @@ function stepCamera(dt) {
 }
 
 /* --------------------------------------------------------------------------
+   The Internet
+
+   A spawn menu and the props it spawns.
+
+   Two kinds of entry live in the same catalog. A `geo` entry builds its shape
+   from a three primitive, and a `model` entry names a key in PROP_MODELS —
+   base64 FBX sitting next to the character data. Everything downstream is
+   identical, so adding a real model later is a base64 blob plus one line
+   here, with no changes to spawning, networking or grabbing.
+
+   Props need nothing special to match the world's look. The pixelation is a
+   property of the render buffer, not of any material, so anything added to
+   the scene is downsampled with everything else. The outline is per-object
+   and is applied here.
+
+   No physics engine. Props sit where they are put and can be carried, turned
+   and deleted; nothing falls, collides or stacks. That is a deliberate
+   stopping point rather than an oversight — a solver is a large dependency
+   and a much larger networking problem, since every client then has to agree
+   on a simulation rather than on a list of positions. The spawn, ownership
+   and sync layers below are the part that a solver would need underneath it,
+   so adding one later does not mean redoing this.
+   -------------------------------------------------------------------------- */
+
+/* Live world state. Insertion order matters: the cap below evicts the oldest. */
+const props = new Map();     // id -> { id, kind, def, group, material, outlineMaterial }
+let propSeq = 0;             // only the authority mints ids
+let heldProp = null;
+let heldDist = 3;
+let internetOpen = false;
+
+/** Sends to every client except one, for a host relaying someone's action. */
+function broadcastToClients(packet, except) {
+  for (const [id, c] of connections) {
+    if (id !== except && c.open) c.send(packet);
+  }
+}
+
+function sendToHost(packet) {
+  const conn = connections.get('host');
+  if (conn && conn.open) conn.send(packet);
+}
+
+/* Parsed prop models, filled during loading. */
+const propModels = {};
+
+/**
+ * The catalog.
+ *
+ * A `geo` entry builds its shape from a three primitive and takes a flat
+ * colour. A `model` entry names a key in PROP_MODELS — base64 glTF alongside
+ * the character data — and keeps the materials the artist exported, since a
+ * textured model has no single base colour to tint.
+ *
+ * `collider` picks what the player and other props bump into: 'sphere' for
+ * balls, 'cylinder' for anything round in plan — barrels, columns, cones —
+ * 'box' for actual boxes, 'none' to pass through. Getting this wrong is very
+ * noticeable: a box around a barrel puts its corners 41% past the visible
+ * edge, so the player shoves it from a gap where nothing is drawn. Everything else —
+ * resting height, mass, bounding radius — is measured from the built object,
+ * so nothing here needs hand-tuning to sit on the ground correctly.
+ */
+const PROPS = [
+  { id: 'crate',  name: 'Crate',  color: 0x9a7040, metal: 0.15, rough: 0.72,
+    collider: 'box',    geo: () => new THREE.BoxGeometry(0.8, 0.8, 0.8) },
+
+  { id: 'ball',   name: 'Ball',   color: 0xc23b3b, metal: 0.3,  rough: 0.35,
+    collider: 'sphere', geo: () => new THREE.SphereGeometry(0.45, 20, 14) },
+
+  { id: 'barrel', name: 'Barrel', color: 0x3f7a52, metal: 0.45, rough: 0.4,
+    collider: 'cylinder', geo: () => new THREE.CylinderGeometry(0.4, 0.4, 1.1, 18) },
+
+  { id: 'plank',  name: 'Plank',  color: 0xa8874f, metal: 0.1,  rough: 0.8,
+    collider: 'box',    geo: () => new THREE.BoxGeometry(2.4, 0.14, 0.55) },
+
+  { id: 'column', name: 'Column', color: 0xb9bcc2, metal: 0.5,  rough: 0.45,
+    collider: 'cylinder', geo: () => new THREE.CylinderGeometry(0.3, 0.3, 2.4, 16) },
+
+  { id: 'cone',   name: 'Cone',   color: 0xe07a24, metal: 0.25, rough: 0.5,
+    collider: 'cylinder', geo: () => new THREE.ConeGeometry(0.45, 1.0, 16) },
+
+  { id: 'marble', name: 'Marble', color: 0x7a5ab8, metal: 0.55, rough: 0.2,
+    collider: 'sphere', geo: () => new THREE.SphereGeometry(0.22, 16, 12) },
+
+  { id: 'boulder', name: 'Boulder', color: 0x6d7078, metal: 0.2, rough: 0.85,
+    collider: 'sphere', geo: () => new THREE.SphereGeometry(1.1, 18, 14) },
+
+  { id: 'block',  name: 'Block',  color: 0x5b6470, metal: 0.55, rough: 0.35,
+    collider: 'box',    geo: () => new THREE.BoxGeometry(2.0, 1.0, 2.0) },
+
+  { id: 'ring',   name: 'Ring',   color: 0xd8a52c, metal: 0.78, rough: 0.25,
+    collider: 'cylinder', geo: () => new THREE.TorusGeometry(0.5, 0.16, 12, 28) },
+
+  { id: 'wedge',  name: 'Wedge',  color: 0x2a7fb8, metal: 0.4,  rough: 0.4,
+    collider: 'box',    geo: () => wedgeGeometry(1.6, 0.7, 1.2) }
+];
+
+/** A right-angled ramp. Built by hand, since three has no wedge primitive. */
+function wedgeGeometry(w, h, d) {
+  const x = w / 2, y = h / 2, z = d / 2;
+
+  const v = [
+    // sloped face
+    -x, -y,  z,   x, -y,  z,   x,  y, -z,
+    -x, -y,  z,   x,  y, -z,  -x,  y, -z,
+    // base
+    -x, -y,  z,  -x, -y, -z,   x, -y, -z,
+    -x, -y,  z,   x, -y, -z,   x, -y,  z,
+    // back
+    -x, -y, -z,  -x,  y, -z,   x,  y, -z,
+    -x, -y, -z,   x,  y, -z,   x, -y, -z,
+    // left side
+    -x, -y,  z,  -x,  y, -z,  -x, -y, -z,
+    // right side
+     x, -y,  z,   x, -y, -z,   x,  y, -z
+  ];
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+const PROP_BY_ID = new Map(PROPS.map(p => [p.id, p]));
+
+const PROP_LIMIT   = 60;    // total props in the world before the oldest goes
+/* All three are measured from the character, not from the camera.
+
+   That distinction is the whole bug this replaced. The aim ray starts at the
+   camera, which sits CAM_DISTANCE behind the player, so a prop three metres
+   in front of them is over nine metres along the ray. Comparing that against
+   a six-metre reach meant nothing was ever grabbable and the mouse button
+   looked dead. */
+const PROP_REACH    = 7;    // how far away a prop can be picked up, in metres
+const PROP_HOLD_MIN = 1.8;  // nearest a carried prop can be pulled
+const PROP_HOLD_MAX = 6.5;
+const PROP_NET_HZ  = 15;    // authority transform broadcasts per second
+
+/* Spawning. The cooldown is the anti-spam measure; the cap is the backstop
+   for someone who waits it out sixty times. */
+const SPAWN_COOLDOWN = 900;   // ms between spawns from one player
+const SPAWN_NEAR     = 2.2;   // closest a prop lands to you
+const SPAWN_FAR      = 4.6;
+const SPAWN_ARC      = 1.7;   // radians of scatter across your facing
+const SPAWN_TRIES    = 14;    // attempts to find a spot clear of other props
+
+/* Physics. Not a general solver — a small integrator with a few contact
+   cases, which is enough for props that roll, settle and get shoved around,
+   and far less than a real engine would cost to add and to network.
+
+   Mass comes from volume, so size is what decides whether something budges.
+   PLAYER_MASS is what everything is shoved relative to: a prop of the same
+   mass as the player splits a push evenly, one twice as heavy takes a third
+   of it. */
+const PROP_DENSITY   = 1.0;
+const PLAYER_MASS    = 1.6;
+const PUSH_GAIN      = 1.15;  // target prop speed as a multiple of yours
+const PROP_GRAVITY   = -20;
+const PROP_BOUNCE    = 0.32;  // how much of an impact is returned on landing
+const PROP_ROLL_DRAG = 0.55;  // ground friction, per second
+const PROP_AIR_DRAG  = 0.12;
+const PROP_SLEEP     = 0.06;  // speed below which a prop stops simulating
+const PROP_SPIN_DRAG = 0.9;   // tumble damping in the air, per second
+const PROP_LAND_DRAG = 6.0;   // and on the ground, where it should settle fast
+const TUMBLE_GAIN    = 1.0;   // how much spin a throw imparts
+const TUMBLE_MAX     = 14;    // rad/s, or a flicked marble becomes a blur
+/* Flinging. A release only throws if the prop was actually moving when it
+   was let go — below FLING_MIN it drops on the spot. Without that floor every
+   release would launch things slightly, and putting a prop down carefully
+   would be impossible.
+
+   Mass reaches the throw twice over, and both are wanted. Once here, and once
+   before that in stepHeldProp, where a heavy prop follows the aim more slowly
+   and so is already moving less when released. The result is that size
+   decides how far something flies without either term being tuned for it. */
+const FLING_MIN      = 2.4;   // m/s of prop movement below which it just drops
+const FLING_GAIN     = 1.6;
+const FLING_MASS_REF = 2.2;   // mass at which a fling keeps about half its power
+
+/**
+ * Parses the glTF props during the loading screen.
+ *
+ * Draco is why this needs a decoder rather than just a loader. The exports
+ * are compressed with KHR_draco_mesh_compression, which glTF marks as
+ * *required* — a viewer without the decoder is expected to refuse the file
+ * rather than fall back, so without this the model would fail outright.
+ * The decoder is fetched from the same CDN as three itself, on first use
+ * only, so an export with no Draco in it costs nothing.
+ *
+ * parse() takes an ArrayBuffer and is callback-based rather than promise-
+ * based, hence the wrapper.
+ */
+async function loadPropModels() {
+  const keys = Object.keys(PROP_MODELS);
+  if (!keys.length) return;
+
+  const draco = new DRACOLoader();
+  draco.setDecoderPath('https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/');
+
+  const loader = new GLTFLoader();
+  loader.setDRACOLoader(draco);
+
+  for (const key of keys) {
+    loadText.textContent = `Unpacking ${key}\u2026`;
+    await new Promise(r => setTimeout(r, 0));
+
+    const buffer = toBuffer(PROP_MODELS[key]);
+
+    try {
+      propModels[key] = await new Promise((resolve, reject) => {
+        loader.parse(buffer, '', resolve, reject);
+      });
+    } catch (e) {
+      throw new Error(`Could not parse the embedded ${key} prop.\n\n${e.message || e}`);
+    }
+  }
+
+  // The decoder spins up a worker; nothing below needs it again.
+  draco.dispose();
+}
+
+/**
+ * Builds the visual for one prop, and measures what the player will bump into.
+ *
+ * The collider is derived from the model's own bounds rather than authored by
+ * hand, so a new model needs no numbers typed in — only a choice of shape.
+ */
+function buildPropObject(def) {
+  const group = new THREE.Group();
+  let material = null;
+
+  if (def.model && propModels[def.model]) {
+    const gltf = propModels[def.model];
+
+    /* Cloned, so several copies can exist at once. Materials are cloned along
+       with it by three, but the underlying textures are shared, which is what
+       we want — one upload of the earth texture however many globes exist. */
+    const model = cloneSkinned(gltf.scene);
+
+    model.traverse(o => {
+      if (o.isMesh || o.isSkinnedMesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+      }
+    });
+
+    // Normalise height. An export can arrive at any scale at all.
+    const box = new THREE.Box3().setFromObject(model);
+    const h = box.max.y - box.min.y;
+    model.scale.setScalar(h > 0.001 ? (def.height || 1) / h : 1);
+
+    // Centre it on its own origin, so rotation spins in place rather than
+    // orbiting, and the collider below sits concentric with the mesh.
+    const box2 = new THREE.Box3().setFromObject(model);
+    const mid = box2.getCenter(new THREE.Vector3());
+    model.position.sub(mid);
+
+    group.add(model);
+  } else {
+    material = new THREE.MeshStandardMaterial({
+      color: def.color,
+      metalness: def.metal,
+      roughness: def.rough,
+      envMapIntensity: ENV_INTENSITY
+    });
+
+    const mesh = new THREE.Mesh(def.geo(), material);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+
+  /* Measured after everything is scaled and centred. Local, not world: the
+     group has not been positioned yet, and a prop only ever rotates about Y,
+     so these extents stay valid wherever it ends up. */
+  const bounds = new THREE.Box3().setFromObject(group);
+  const half = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+  const centre = bounds.getCenter(new THREE.Vector3());
+
+  const collider = def.collider || 'box';
+  const radius = Math.max(half.x, half.z);
+
+  // Same treatment as the characters, so props sit in the same drawing style.
+  let outlineMaterial = null;
+  if (OUTLINE_PIXELS > 0) {
+    outlineMaterial = makeOutlineMaterial(OUTLINE_PIXELS);
+    outlineMaterial.color.copy(outlineColorFor(
+      def.outline !== undefined ? def.outline : def.color));
+    buildOutline(group, outlineMaterial);
+  }
+
+  /* Its own animation, if the export carries one. Mixed per prop rather than
+     shared, so two copies are not locked to the same frame. */
+  let mixer = null;
+  if (def.model && propModels[def.model]) {
+    const clips = propModels[def.model].animations;
+    if (clips && clips.length) {
+      mixer = new THREE.AnimationMixer(group);
+      for (const clip of clips) mixer.clipAction(clip).play();
+    }
+  }
+
+  return { group, material, outlineMaterial, mixer, collider, half, centre, radius };
+}
+
+/** Frees everything a build allocated. */
+function disposeBuilt(built) {
+  if (built.mixer) built.mixer.stopAllAction();
+  if (built.material) built.material.dispose();
+  if (built.outlineMaterial) built.outlineMaterial.dispose();
+}
+
+/**
+ * Works out how high each kind sits so it rests on the ground.
+ *
+ * Done by building one of each and measuring, rather than by hand-tuning a
+ * number per entry. An export's proportions are not knowable in advance —
+ * whether it is taller than it is wide, where its origin sits — and getting
+ * this wrong shows up as props buried in the floor or hovering above it. A
+ * `lift` in the catalog still wins if one is given, for anything meant to
+ * float.
+ */
+function measureProps() {
+  for (const def of PROPS) {
+    if (def.lift !== undefined) continue;
+
+    const built = buildPropObject(def);
+
+    def.lift = built.collider === 'sphere'
+      ? built.radius - built.centre.y
+      : built.half.y - built.centre.y;
+
+    // Kept for spawn spacing, which has to know how wide a prop is before
+    // there is one to measure.
+    def.radius = built.radius;
+
+    disposeBuilt(built);
+  }
+}
+
+/**
+ * Adds a prop to the world.
+ *
+ * Called on every client for every prop, whoever spawned it — the id comes
+ * from the host so that all clients agree on it.
+ */
+function addProp(id, kind, x, y, z, ry) {
+  if (props.has(id)) return props.get(id);
+
+  const def = PROP_BY_ID.get(kind);
+  if (!def) return null;                 // unknown kind: ignore rather than throw
+
+  const built = buildPropObject(def);
+  built.group.position.set(x, y, z);
+  built.group.rotation.y = ry;
+  scene.add(built.group);
+
+  built.group.userData.propId = id;
+
+  const rec = {
+    id, kind, def, ...built,
+
+    vel: new THREE.Vector3(),
+
+    /* Angular velocity as a vector, not a yaw rate. A single axis was why a
+       ring could never land flat: whatever it was thrown at, it could only
+       ever turn about the world's vertical, so it stayed on edge for ever. */
+    angVel: new THREE.Vector3(),
+    asleep: false,
+    holdUntil: 0,              // authority: a remote player is carrying it
+
+    // Where its underside meets the ground, so contact is one comparison.
+    rest: built.collider === 'sphere'
+      ? built.radius - built.centre.y
+      : built.half.y - built.centre.y,
+
+    mass: propMass(built.collider, built.half, built.radius),
+
+    // Clients interpolate toward these rather than snapping to each packet.
+    netPos: null,
+    netQuat: null
+  };
+
+  props.set(id, rec);
+
+  /* A hard ceiling on prop count, oldest first. Without one a room fills up
+     until the frame rate collapses, and there is no way back short of
+     everyone reloading. Map preserves insertion order, so the first key is
+     the oldest. */
+  if (props.size > PROP_LIMIT) {
+    const oldest = props.keys().next().value;
+    if (oldest !== id) removeProp(oldest);
+  }
+
+  return rec;
+}
+
+function removeProp(id) {
+  const rec = props.get(id);
+  if (!rec) return;
+
+  if (heldProp && heldProp.id === id) heldProp = null;
+
+  if (rec.mixer) rec.mixer.stopAllAction();
+
+  scene.remove(rec.group);
+  if (rec.material) rec.material.dispose();
+  if (rec.outlineMaterial) rec.outlineMaterial.dispose();
+
+  rec.group.traverse(o => { if (o.isMesh && o.geometry) o.geometry.dispose(); });
+  props.delete(id);
+}
+
+function clearProps() {
+  hideBeam();
+  for (const id of [...props.keys()]) removeProp(id);
+  propSeq = 0;
+  lastSpawnAt = -Infinity;
+  clientSpawnAt.clear();
+}
+
+/** Where a newly spawned prop lands: a little ahead of where you're looking. */
+const spawnDir = new THREE.Vector3();
+
+/**
+ * Picks somewhere to drop a new prop.
+ *
+ * Scattered across an arc in front of you rather than always the same point
+ * two metres ahead, and checked against what is already there. Spawning
+ * everything at one fixed spot meant a second prop appeared inside the
+ * first, and with solid props that is worse than untidy — they start
+ * overlapping and shove each other apart the moment physics runs.
+ *
+ * Rejection sampling rather than anything cleverer: a dozen tries finds a
+ * gap in any room that isn't packed solid, and when the area genuinely is
+ * full the last attempt is used anyway. Refusing to spawn would be a worse
+ * answer than a slight overlap the solver will sort out.
+ */
+function spawnPoint(def) {
+  const p = local.group.position;
+  const clearance = (def.radius || 0.5) + 0.25;
+
+  let best = null;
+
+  for (let i = 0; i < SPAWN_TRIES; i++) {
+    const angle = yaw + (Math.random() - 0.5) * SPAWN_ARC;
+    const dist = SPAWN_NEAR + Math.random() * (SPAWN_FAR - SPAWN_NEAR);
+
+    const x = p.x + Math.sin(angle) * dist;
+    const z = p.z + Math.cos(angle) * dist;
+
+    best = { x, y: def.lift || 0.5, z, ry: Math.random() * Math.PI * 2 };
+
+    let clear = true;
+    for (const rec of props.values()) {
+      const gap = clearance + rec.radius;
+      const dx = x - rec.group.position.x;
+      const dz = z - rec.group.position.z;
+      if (dx * dx + dz * dz < gap * gap) { clear = false; break; }
+    }
+
+    if (clear) break;
+  }
+
+  return best;
+}
+
+/* --------------------------------------------------------------------------
+   Collision
+
+   Analytic shapes against a vertical cylinder for the player, resolved by
+   pushing out of overlap. This is not a physics solver and does not pretend
+   to be one: props never move in response to being hit, and nothing falls or
+   stacks. What it does give is the part that actually matters for a sandbox —
+   spawned objects are solid, you can stand on them, and you cannot walk
+   through them.
+
+   Only the local player is resolved. Every client runs this for itself, and
+   remote avatars are drawn where the network says they are; resolving them
+   here as well would mean two clients disagreeing about the same push and
+   fighting over it.
+   -------------------------------------------------------------------------- */
+
+const PLAYER_RADIUS = 0.34;
+const PLAYER_HEIGHT = 1.7;
+const STEP_UP       = 0.62;   // ledge height that can be walked onto directly
+const COLLIDE_SKIN  = 0.001;  // leaves contact rather than exact touching
+
+const collideVec = new THREE.Vector3();
+
+/**
+ * Pushes the player out of any prop they are inside, and reports the highest
+ * surface under their feet.
+ *
+ * Horizontal resolution happens first and vertical support second, which is
+ * the order that makes a ledge walkable: a prop whose top is within STEP_UP
+ * of the feet is treated as floor and skipped for pushing, so you step up
+ * onto it instead of being stopped by its side.
+ */
+function resolveCollisions(avatar) {
+  const pos = avatar.group.position;
+  let floor = 0;
+
+  /* A client resolves itself against props so it never walks through one,
+     but does not get to move them — the authority owns that, and two
+     machines pushing the same prop would fight. pushProp is a no-op here. */
+  const canPush = propsAuthoritative();
+
+  /* On the way up, walls the player could plausibly land on stop blocking.
+
+     Without this, mounting a block was luck. Jumping from right beside one,
+     the first half of the arc is spent below its top, so the side counts as a
+     wall and shoves the player away — by the time they are high enough to
+     stand on it they have been pushed out of reach of it. Letting the ascent
+     pass through anything shorter than the player converts that into landing
+     on top, which is what was being attempted. Coming down, the normal rules
+     apply again, so nothing can be dropped through. */
+  const mounting = !avatar.grounded && avatar.velY > 0;
+
+  for (const rec of props.values()) {
+    if (rec.collider === 'none') continue;
+
+    // Whatever you are carrying cannot block you, or walking forward with a
+    // prop held out in front would shove you backwards for ever.
+    if (heldProp && heldProp.id === rec.id) continue;
+
+    const sh = propShape(rec);
+
+    const c = rec.group.position;
+    const cx = c.x + rec.centre.x;
+    const cy = c.y + rec.centre.y;
+    const cz = c.z + rec.centre.z;
+
+    const dx = pos.x - cx;
+    const dz = pos.z - cz;
+
+    if (rec.collider === 'sphere') {
+      const r = sh.r;
+      const dist = Math.hypot(dx, dz);
+
+      /* Support first, and unconditionally. An earlier version derived the
+         floor inside the overlap test, which meant a player standing on top
+         had already been rejected by it — their feet are a full radius above
+         the centre, so the sphere read as "not overlapping" and they fell
+         straight through. Standing on something is a question about the
+         surface below you, not about whether you are inside it. */
+      if (dist < r) {
+        const top = cy + Math.sqrt(r * r - dist * dist);
+        if (top <= pos.y + STEP_UP) floor = Math.max(floor, top);
+      }
+
+      if (pos.y >= cy + r - 0.02) continue;                 // on top of it
+      if (pos.y + PLAYER_HEIGHT <= cy - r) continue;        // entirely beneath
+
+      /* Nearest point on the player's spine to the centre. Comparing against
+         that rather than the feet is what lets one test cover both walking
+         under a sphere overhead and into one at chest height. */
+      const spineY = Math.min(Math.max(cy, pos.y), pos.y + PLAYER_HEIGHT);
+      const dy = cy - spineY;
+      if (Math.abs(dy) >= r) continue;
+
+      // Radius of the sphere's cross-section at that height.
+      const slice = Math.sqrt(r * r - dy * dy);
+      if (dist >= slice + PLAYER_RADIUS) continue;
+
+      // Low enough to step onto rather than be stopped by.
+      if (dist < r && cy + Math.sqrt(r * r - dist * dist) <= pos.y + STEP_UP) continue;
+      if (mounting && cy + r <= pos.y + PLAYER_HEIGHT) continue;
+
+      const want = slice + PLAYER_RADIUS + COLLIDE_SKIN;
+
+      if (dist < 0.0001) {
+        pos.x = cx + want;          // dead centre: no direction, so pick one
+      } else {
+        const nx = dx / dist, nz = dz / dist;
+
+        /* Split by mass. The player takes the remainder of the correction,
+           so a light prop skitters away and a heavy one barely gives — which
+           is the whole point of deriving mass from size. */
+        const share = pushProp(rec, -nx, -nz, avatar.speed, canPush);
+        const mine = 1 - share;
+
+        pos.x = cx + nx * (dist + (want - dist) * mine);
+        pos.z = cz + nz * (dist + (want - dist) * mine);
+      }
+    } else if (sh.round) {
+      /* An upright cylinder: a circle in plan with flat ends, so the sides
+         and the top are two separate cases rather than one curve. */
+      const r = sh.r;
+      const top = cy + sh.ey;
+      const bottom = cy - sh.ey;
+      const dist = Math.hypot(dx, dz);
+
+      if (dist < r && top <= pos.y + STEP_UP) floor = Math.max(floor, top);
+
+      if (dist >= r + PLAYER_RADIUS) continue;              // clear in plan view
+      if (pos.y >= top - 0.02) continue;                    // standing on it
+      if (pos.y + PLAYER_HEIGHT <= bottom) continue;        // walking under it
+      if (top <= pos.y + STEP_UP) continue;                 // a kerb, not a wall
+      if (mounting && top <= pos.y + PLAYER_HEIGHT) continue;
+
+      const want = r + PLAYER_RADIUS + COLLIDE_SKIN;
+
+      if (dist < 0.0001) {
+        pos.x = cx + want;
+      } else {
+        const nx = dx / dist, nz = dz / dist;
+        const share = pushProp(rec, -nx, -nz, avatar.speed, canPush);
+        const mine = 1 - share;
+
+        pos.x = cx + nx * (dist + (want - dist) * mine);
+        pos.z = cz + nz * (dist + (want - dist) * mine);
+      }
+    } else {
+      const hx = sh.ex, hy = sh.ey, hz = sh.ez;
+      const top = cy + hy;
+      const bottom = cy - hy;
+
+      const overX = hx + PLAYER_RADIUS - Math.abs(dx);
+      const overZ = hz + PLAYER_RADIUS - Math.abs(dz);
+
+      if (overX <= 0 || overZ <= 0) continue;               // clear in plan view
+
+      /* Measured against the true footprint, not the padded one, so you get
+         support only where there is actually surface underfoot — otherwise
+         you could stand on thin air a player-radius past the edge. */
+      if (Math.abs(dx) <= hx && Math.abs(dz) <= hz && top <= pos.y + STEP_UP) {
+        floor = Math.max(floor, top);
+      }
+
+      if (pos.y >= top - 0.02) continue;                    // standing on it
+      if (pos.y + PLAYER_HEIGHT <= bottom) continue;        // walking under it
+      if (top <= pos.y + STEP_UP) continue;                 // a kerb, not a wall
+      if (mounting && top <= pos.y + PLAYER_HEIGHT) continue;
+
+      const sx = Math.sign(dx || 1), sz = Math.sign(dz || 1);
+      const share = overX < overZ
+        ? pushProp(rec, -sx, 0, avatar.speed, canPush)
+        : pushProp(rec, 0, -sz, avatar.speed, canPush);
+
+      const mine = 1 - share;
+
+      /* Out along the shallower axis, so a corner touch doesn't shove things
+         sideways across the whole width of the box. */
+      if (overX < overZ) pos.x += sx * (overX + COLLIDE_SKIN) * mine;
+      else               pos.z += sz * (overZ + COLLIDE_SKIN) * mine;
+    }
+  }
+
+  avatar.floorY = floor;
+}
+
+/* --------------------------------------------------------------------------
+   Prop networking
+
+   Host-authoritative on identity, not on movement. The host is the only one
+   that mints ids, which is what keeps clients from colliding on a name for
+   the same object; but whoever is carrying a prop sends its position
+   directly. Routing movement through the host as well would add a round trip
+   to every frame of a drag and make carrying feel like dragging elastic.
+   -------------------------------------------------------------------------- */
+
+/** True when this client decides things for itself: solo, or hosting. */
+function propsAuthoritative() {
+  return !peer || isHost;
+}
+
+/**
+ * Rate limits spawning.
+ *
+ * Checked here for the local player and again on the host for each client,
+ * because a client's own cooldown is only a suggestion — the copy that
+ * matters is the one the sender cannot edit.
+ */
+let lastSpawnAt = -Infinity;
+const clientSpawnAt = new Map();     // peer id -> last accepted spawn
+
+function spawnCooldownLeft() {
+  return SPAWN_COOLDOWN - (performance.now() - lastSpawnAt);
+}
+
+function requestSpawn(kind) {
+  const def = PROP_BY_ID.get(kind);
+  if (!def || !local) return false;
+
+  if (spawnCooldownLeft() > 0) return false;
+  lastSpawnAt = performance.now();
+
+  const at = spawnPoint(def);
+
+  if (propsAuthoritative()) {
+    const id = 'p' + (++propSeq);
+    addProp(id, kind, at.x, at.y, at.z, at.ry);
+    broadcastToClients({ t: 'prop-add', id, kind, ...at });
+  } else {
+    // Clients ask and wait. Spawning locally first would mean inventing an id
+    // the host has never heard of, and reconciling that is more trouble than
+    // the round trip is worth.
+    sendToHost({ t: 'prop-spawn', kind, ...at });
+  }
+
+  return true;
+}
+
+function requestDespawn(id) {
+  if (!props.has(id)) return;
+
+  if (propsAuthoritative()) {
+    removeProp(id);
+    broadcastToClients({ t: 'prop-remove', id });
+  } else {
+    sendToHost({ t: 'prop-del', id });
+  }
+}
+
+/**
+ * One prop's transform, packed flat.
+ *
+ * A quaternion rather than a Y angle, because props tumble now and a single
+ * axis cannot describe a rolling sphere. An array rather than an object
+ * keeps the packet small when fifty of these go out fifteen times a second.
+ */
+function packProp(rec) {
+  const p = rec.group.position;
+  const q = rec.group.quaternion;
+
+  return [
+    rec.id,
+    +p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2),
+    +q.x.toFixed(3), +q.y.toFixed(3), +q.z.toFixed(3), +q.w.toFixed(3)
+  ];
+}
+
+/** Tells the room where a carried prop is. Sent by whoever is holding it. */
+function sendPropMove(rec) {
+  const packet = { t: 'prop-hold', p: packProp(rec) };
+
+  if (propsAuthoritative()) broadcastToClients(packet);
+  else sendToHost(packet);
+}
+
+/**
+ * The authority's periodic transform broadcast.
+ *
+ * Only awake props are sent. A settled room costs nothing, which is what
+ * makes a 60-prop ceiling affordable at 15Hz — the alternative is sending
+ * sixty transforms a frame for objects that visibly are not moving.
+ */
+function broadcastProps() {
+  if (!propsAuthoritative() || !connections.size) return;
+
+  const moving = [];
+  for (const rec of props.values()) {
+    if (!rec.asleep) moving.push(packProp(rec));
+  }
+
+  if (moving.length) broadcastToClients({ t: 'prop-sync', a: moving });
+}
+
+const netQuatTmp = new THREE.Quaternion();
+
+/** Applies one packed transform, from a sync or from a holder. */
+function applyPackedProp(a) {
+  const rec = props.get(a[0]);
+  if (!rec) return;
+
+  // Ignored while you are the one carrying it, or a packet from a moment ago
+  // would yank it out of your hands.
+  if (heldProp && heldProp.id === rec.id) return;
+
+  if (propsAuthoritative()) {
+    /* A client is carrying it. Snap rather than ease — the holder is the
+       authority on where it is — and suspend simulation briefly, so gravity
+       doesn't fight them between packets. */
+    rec.group.position.set(a[1], a[2], a[3]);
+    rec.group.quaternion.set(a[4], a[5], a[6], a[7]);
+    rec.holdUntil = performance.now() + 400;
+    rec.vel.set(0, 0, 0);
+    rec.angVel.set(0, 0, 0);
+    rec.asleep = false;
+    return;
+  }
+
+  if (!rec.netPos) {
+    rec.netPos = new THREE.Vector3();
+    rec.netQuat = new THREE.Quaternion();
+  }
+
+  rec.netPos.set(a[1], a[2], a[3]);
+  rec.netQuat.set(a[4], a[5], a[6], a[7]);
+
+  /* Teleport rather than glide if it has moved a long way — a fresh join, or
+     a prop that was deleted and respawned elsewhere. */
+  if (rec.group.position.distanceToSquared(rec.netPos) > 100) {
+    rec.group.position.copy(rec.netPos);
+    rec.group.quaternion.copy(rec.netQuat);
+  }
+}
+
+/** Everything currently in the world, for a client that has just joined. */
+function propSnapshot() {
+  const list = [];
+
+  for (const rec of props.values()) {
+    list.push({ id: rec.id, kind: rec.kind, p: packProp(rec) });
+  }
+
+  return list;
+}
+
+function applyPropList(list) {
+  clearProps();
+
+  for (const s of list || []) {
+    const rec = addProp(s.id, s.kind, s.p[1], s.p[2], s.p[3], 0);
+    if (rec) rec.group.quaternion.set(s.p[4], s.p[5], s.p[6], s.p[7]);
+  }
+}
+
+/** A prop let go of, with the momentum it was carrying. */
+function applyPropDrop(msg) {
+  const rec = props.get(msg.id);
+  if (!rec) return;
+
+  rec.holdUntil = 0;
+  rec.asleep = false;
+
+  if (propsAuthoritative()) {
+    rec.vel.set(msg.vx || 0, msg.vy || 0, msg.vz || 0);
+    rec.angVel.set(msg.wx || 0, msg.wy || 0, msg.wz || 0);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Prop physics
+
+   A small integrator, not an engine. Gravity, ground contact, friction,
+   rolling and pairwise separation — enough that props settle, roll downhill
+   of a shove and knock each other aside, and not so much that it needs a
+   constraint solver or a broadphase.
+
+   Only the authority simulates. Every client running its own copy would
+   drift apart within seconds, because floating-point results differ between
+   machines and the inputs (who is pushing what, and when) arrive at
+   different times. Clients are told where things ended up and ease toward
+   it, which is the same arrangement the avatars already use.
+
+   Prop-against-prop uses each prop's bounding sphere regardless of its
+   declared collider. Box-box separation needs contact manifolds and rotation
+   handling to be worth having, and against a catalog of round things it
+   would buy nothing. Angular props will collide a little too generously
+   until that changes.
+   -------------------------------------------------------------------------- */
+
+const rollAxis = new THREE.Vector3();
+const rollQuat = new THREE.Quaternion();
+const spinAxis = new THREE.Vector3();
+const pairVec = new THREE.Vector3();
+
+/**
+ * Turns a prop by its angular velocity for one step.
+ *
+ * premultiply, not multiply: the spin is happening in world space, and
+ * multiplying would apply it in the prop's own frame instead, so a tumbling
+ * object would drag its axis of rotation around with it and wander.
+ */
+function applySpin(rec, dt) {
+  const rate = rec.angVel.length();
+  if (rate < 1e-4) return;
+
+  spinAxis.copy(rec.angVel).divideScalar(rate);
+  rollQuat.setFromAxisAngle(spinAxis, rate * dt);
+  rec.group.quaternion.premultiply(rollQuat);
+}
+
+/** Volume-derived, so bigger genuinely means harder to move. */
+function propMass(collider, half, radius) {
+  const volume = collider === 'sphere'
+    ? (4 / 3) * Math.PI * radius * radius * radius
+    : 8 * half.x * half.y * half.z;
+
+  return Math.max(0.05, volume * PROP_DENSITY);
+}
+
+/**
+ * Shoves a prop, sharing the push by mass, and wakes it.
+ *
+ * Sets a target speed along the push direction rather than adding an
+ * impulse. Contact lasts many frames — you stay pressed against whatever you
+ * are walking into — and adding on each one compounds, so an earlier version
+ * launched a light prop at seventeen metres a second from a walking pace.
+ * A target is also closer to what is actually happening: you push something
+ * along at roughly your own speed, not harder the longer you touch it.
+ */
+function pushProp(rec, dx, dz, speed, canPush = true) {
+  const share = PLAYER_MASS / (PLAYER_MASS + rec.mass);
+  if (!canPush) return share;
+
+  const want = speed * share * PUSH_GAIN;
+  const along = rec.vel.x * dx + rec.vel.z * dz;
+
+  if (along < want) {
+    rec.vel.x += dx * (want - along);
+    rec.vel.z += dz * (want - along);
+  }
+
+  rec.asleep = false;
+  return share;
+}
+
+function stepProps(dt) {
+  for (const rec of props.values()) {
+    if (rec.mixer) rec.mixer.update(dt);
+  }
+
+  if (!propsAuthoritative()) {
+    // Clients ease toward the last transform the authority sent. Snapping
+    // would show every packet as a jump at 15Hz.
+    for (const rec of props.values()) {
+      if (heldProp && heldProp.id === rec.id) continue;
+      if (!rec.netPos) continue;
+
+      rec.group.position.lerp(rec.netPos, Math.min(1, dt * 12));
+      rec.group.quaternion.slerp(rec.netQuat, Math.min(1, dt * 12));
+    }
+    return;
+  }
+
+  simulateProps(dt);
+}
+
+function simulateProps(dt) {
+  const now = performance.now();
+  const list = [...props.values()];
+
+  for (const rec of list) {
+    // Carried props are driven by whoever holds them, here or over the wire.
+    if (heldProp && heldProp.id === rec.id) { rec.asleep = false; continue; }
+    if (rec.holdUntil > now) { rec.asleep = false; continue; }
+
+    if (rec.asleep) continue;
+
+    const pos = rec.group.position;
+
+    rec.vel.y += PROP_GRAVITY * dt;
+
+    pos.x += rec.vel.x * dt;
+    pos.y += rec.vel.y * dt;
+    pos.z += rec.vel.z * dt;
+
+    /* Ground height from the prop's *current* pose, not from its bind-pose
+       half-height. A crate tipped onto its corner reaches lower than a crate
+       sitting flat, and using the flat figure buried it in the floor up to a
+       fifth of its size while it toppled. */
+    const rest = rec.collider === 'sphere'
+      ? rec.rest
+      : propShape(rec).ey - rec.centre.y;
+
+    let onGround = false;
+
+    if (pos.y <= rest) {
+      pos.y = rest;
+
+      /* Only bounce off a real impact. Without the threshold a prop at rest
+         jitters forever, bouncing off the microscopic velocity gravity gives
+         it each frame. */
+      rec.vel.y = rec.vel.y < -1.2 ? -rec.vel.y * PROP_BOUNCE : 0;
+      onGround = true;
+    }
+
+    // Friction on the ground, light drag in the air.
+    const drag = onGround ? PROP_ROLL_DRAG : PROP_AIR_DRAG;
+    const damp = Math.max(0, 1 - drag * dt);
+    rec.vel.x *= damp;
+    rec.vel.z *= damp;
+
+    const speed = Math.hypot(rec.vel.x, rec.vel.z);
+
+    if (rec.collider === 'sphere' && onGround && speed > 0.001) {
+      /* Rolling without slipping: the contact point is stationary, so the
+         turn rate is speed over radius, about the horizontal axis at right
+         angles to travel. This is what makes a ball look like it is rolling
+         rather than sliding along with a spin bolted on. Set rather than
+         accumulated — a rolling ball's spin is a consequence of how fast it
+         is going, not something it carries independently. */
+      rollAxis.set(-rec.vel.z, 0, rec.vel.x).normalize();
+      rec.angVel.copy(rollAxis).multiplyScalar(speed / rec.radius);
+    } else {
+      /* Everything else keeps whatever tumble it was given and sheds it — fast
+         once it is down, slowly while it is still in the air. */
+      const spinDrag = onGround ? PROP_LAND_DRAG : PROP_SPIN_DRAG;
+      rec.angVel.multiplyScalar(Math.max(0, 1 - spinDrag * dt));
+    }
+
+    // Fall over rather than balancing on an edge. Only once it is down —
+    // in the air there is nothing to push against.
+    if (onGround) rightProp(rec, dt);
+
+    applySpin(rec, dt);
+
+    /* Asleep once it has effectively stopped. Without this every prop in the
+       room keeps integrating and broadcasting forever, which costs frame
+       time and bandwidth for objects that are visibly not moving.
+
+       The spin has to be still as well, or a prop that has stopped moving but
+       is mid-tumble freezes at whatever angle it happened to be at. */
+    if (onGround && speed < PROP_SLEEP && Math.abs(rec.vel.y) < PROP_SLEEP
+        && rec.angVel.lengthSq() < PROP_SLEEP * PROP_SLEEP
+        && restingFlat(rec)) {
+      rec.vel.set(0, 0, 0);
+      rec.angVel.set(0, 0, 0);
+      rec.asleep = true;
+    }
+  }
+
+  separateProps(list, dt);
+
+  /* Kept for catalog entries that ask for it — a model that should turn on
+     the spot once it has settled. None of the primitives do. */
+  for (const rec of list) {
+    if (!rec.def.spin || rec.asleep === false) continue;
+    if (heldProp && heldProp.id === rec.id) continue;
+
+    rec.group.rotateY(rec.def.spin * dt);
+  }
+}
+
+/**
+ * The footprint a prop presents right now, given how it is currently turned.
+ *
+ * Everything below works against a vertical circle or an axis-aligned box,
+ * because those are the two shapes a cheap test can resolve. A prop that has
+ * tumbled is neither, so its current orientation has to be folded in before
+ * the test rather than assumed away — which is what the old version did, and
+ * why a crate that had rolled onto its corner still collided as though it
+ * were square-on.
+ *
+ * A cylinder stays a circle only while it is roughly upright. Once it is on
+ * its side it is a box as far as the player is concerned, so it becomes one.
+ */
+const shapeAxis = new THREE.Vector3();
+const shapeUp = new THREE.Vector3(0, 1, 0);
+const shape = { round: false, ex: 0, ey: 0, ez: 0, r: 0 };
+
+function propShape(rec) {
+  if (rec.collider === 'sphere') {
+    shape.round = true;
+    shape.r = rec.radius;
+    shape.ex = shape.ez = rec.radius;
+    shape.ey = rec.radius;
+    return shape;
+  }
+
+  if (rec.collider === 'cylinder') {
+    // How far the prop's own up-axis has tipped away from vertical.
+    shapeAxis.copy(shapeUp).applyQuaternion(rec.group.quaternion);
+
+    if (Math.abs(shapeAxis.y) > 0.75) {
+      shape.round = true;
+      shape.r = Math.max(rec.half.x, rec.half.z);
+      shape.ex = shape.ez = shape.r;
+      shape.ey = rec.half.y;
+      return shape;
+    }
+  }
+
+  /* Axis-aligned bounds of the rotated box. Conservative — a crate at 45
+     degrees reads slightly larger than it looks — but it is three dot
+     products against the alternative of separating axes and contact
+     manifolds, and at these speeds nobody sees the difference. */
+  const e = rec.group.matrixWorld.elements;
+  const hx = rec.half.x, hy = rec.half.y, hz = rec.half.z;
+
+  shape.round = false;
+  shape.ex = Math.abs(e[0]) * hx + Math.abs(e[4]) * hy + Math.abs(e[8]) * hz;
+  shape.ey = Math.abs(e[1]) * hx + Math.abs(e[5]) * hy + Math.abs(e[9]) * hz;
+  shape.ez = Math.abs(e[2]) * hx + Math.abs(e[6]) * hy + Math.abs(e[10]) * hz;
+  shape.r = Math.max(shape.ex, shape.ez);
+
+  return shape;
+}
+
+/* --------------------------------------------------------------------------
+   Settling
+
+   Which way up a prop ends when it stops moving.
+
+   Nothing here computes torque from a contact point, so a landing prop has no
+   reason to fall over — its spin simply damps out and it freezes at whatever
+   angle it happened to be at, including balanced on one corner. That is the
+   single most obviously wrong thing a physics object can do, so instead of a
+   real solver the prop is steered toward the nearest orientation it could
+   actually rest in and allowed to topple into it.
+
+   The set of stable orientations depends on the shape. A box has twenty-four:
+   any of its faces down, in any of four turns. A cylinder has two kinds,
+   standing or on its side. A sphere has none — every orientation is a resting
+   one, which is why they are skipped.
+   -------------------------------------------------------------------------- */
+
+/* How hard a prop rights itself once it is down, and the size that figure is
+   written for.
+
+   Scaled by size, because that is what governs toppling. Mass cancels out of
+   a gravity-driven fall entirely; what is left is that the time to go over
+   grows with the square root of the object's size, which is why a matchbox
+   flips instantly and a wardrobe goes slowly enough to step back from. One
+   flat rate for everything is what made the boulder snap round like a marble.
+
+   Square root rather than a straight division, which was the first attempt.
+   Dividing by size is right for the angular acceleration but it is not what
+   ends up on screen, because the ground drag is a fixed rate and swamps a
+   weak torque — the block took five and a half seconds to fall off its own
+   corner and read as stuck rather than as heavy. */
+const RIGHT_TORQUE  = 22.0;
+const RIGHT_SIZE    = 0.4;   // the size the figure above is tuned for
+const RIGHT_SNAP    = 0.04;  // radians from stable at which it is called done
+
+const restQuat = new THREE.Quaternion();
+const restMat = new THREE.Matrix4();
+const axX = new THREE.Vector3();
+const axY = new THREE.Vector3();
+const axZ = new THREE.Vector3();
+const snapA = new THREE.Vector3();
+const snapB = new THREE.Vector3();
+const rightAxis = new THREE.Vector3();
+const rightDelta = new THREE.Quaternion();
+
+/** The world axis a direction is closest to, sign included. */
+function snapToAxis(v, out, avoid) {
+  const ax = Math.abs(v.x), ay = Math.abs(v.y), az = Math.abs(v.z);
+
+  // `avoid` is the axis already claimed; a box's second vector has to take
+  // its next-best choice or the two would collapse onto the same line.
+  const blocked = avoid ? Math.abs(avoid.x) > 0.5 ? 0 : Math.abs(avoid.y) > 0.5 ? 1 : 2 : -1;
+
+  let best = -1, bestVal = -1;
+  const vals = [ax, ay, az];
+
+  for (let i = 0; i < 3; i++) {
+    if (i === blocked) continue;
+    if (vals[i] > bestVal) { bestVal = vals[i]; best = i; }
+  }
+
+  out.set(0, 0, 0);
+  if (best === 0) out.x = Math.sign(v.x) || 1;
+  else if (best === 1) out.y = Math.sign(v.y) || 1;
+  else out.z = Math.sign(v.z) || 1;
+
+  return out;
+}
+
+/** Writes the nearest orientation this prop could rest in into `out`. */
+function nearestRest(rec, out) {
+  const m = rec.group.matrixWorld.elements;
+
+  axX.set(m[0], m[1], m[2]).normalize();
+  axY.set(m[4], m[5], m[6]).normalize();
+
+  if (rec.collider === 'cylinder') {
+    /* Only the axis of symmetry matters — how far it is turned about that
+       axis makes no difference to how it sits. So this is the shortest
+       rotation that puts the local Y onto a world axis, and nothing more. */
+    snapToAxis(axY, snapA);
+    out.setFromUnitVectors(axY, snapA).multiply(rec.group.quaternion);
+    return out;
+  }
+
+  // A box: snap two axes and derive the third, which guarantees the result
+  // is a rotation rather than a reflection.
+  snapToAxis(axY, snapA);
+  snapToAxis(axX, snapB, snapA);
+  axZ.crossVectors(snapB, snapA);
+
+  restMat.makeBasis(snapB, snapA, axZ);
+  return out.setFromRotationMatrix(restMat);
+}
+
+/** True when a prop is close enough to a stable pose to stop simulating. */
+function restingFlat(rec) {
+  if (rec.collider === 'sphere') return true;
+
+  nearestRest(rec, restQuat);
+  return rec.group.quaternion.angleTo(restQuat) < RIGHT_SNAP * 1.5;
+}
+
+/**
+ * Topples a grounded prop toward a pose it could actually hold.
+ *
+ * A torque rather than a slerp, so it accelerates away from the unstable
+ * angle the way a real object does — a crate on its corner hesitates, tips,
+ * then drops onto its face. A slerp would glide there at constant speed and
+ * read as the object being dragged upright by hand.
+ */
+function rightProp(rec, dt) {
+  if (rec.collider === 'sphere') return;
+
+  nearestRest(rec, restQuat);
+
+  rightDelta.copy(rec.group.quaternion).invert().premultiply(restQuat);
+
+  // Shortest way round: q and -q are the same orientation, and without this
+  // a prop more than 180 degrees out would take the long path.
+  if (rightDelta.w < 0) {
+    rightDelta.set(-rightDelta.x, -rightDelta.y, -rightDelta.z, -rightDelta.w);
+  }
+
+  const sin = Math.hypot(rightDelta.x, rightDelta.y, rightDelta.z);
+  if (sin < 1e-5) return;
+
+  const angle = 2 * Math.atan2(sin, rightDelta.w);
+
+  if (angle < RIGHT_SNAP) {
+    // Close enough. Snapping avoids an endless crawl over the last degree.
+    rec.group.quaternion.copy(restQuat);
+    rec.angVel.multiplyScalar(0.2);
+    return;
+  }
+
+  rightAxis.set(rightDelta.x, rightDelta.y, rightDelta.z).divideScalar(sin);
+
+  const torque = RIGHT_TORQUE * Math.sqrt(RIGHT_SIZE / Math.max(0.15, rec.radius));
+
+  rec.angVel.addScaledVector(rightAxis, angle * torque * dt);
+  rec.asleep = false;
+}
+
+/**
+ * Keeps props from sharing space.
+ *
+ * Three cases, driven by what each prop currently presents rather than by
+ * what it was declared as — an upright barrel separates as a circle, the same
+ * barrel on its side as a box.
+ *
+ * Positional separation split by mass, plus a little velocity so a shove
+ * carries through a line of props instead of stopping at the first. O(n²),
+ * which at a 60-prop ceiling is under two thousand checks a frame — not worth
+ * a spatial index.
+ */
+const shapeA = { round: false, ex: 0, ey: 0, ez: 0, r: 0 };
+
+function separateProps(list, dt) {
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    if (a.collider === 'none') continue;
+
+    Object.assign(shapeA, propShape(a));
+
+    for (let j = i + 1; j < list.length; j++) {
+      const b = list[j];
+      if (b.collider === 'none') continue;
+
+      // Cheap reject on bounding radii before any real work.
+      const rough = shapeA.r + b.radius + 0.5;
+      pairVec.subVectors(a.group.position, b.group.position);
+      if (pairVec.lengthSq() >= rough * rough) continue;
+
+      const shB = propShape(b);
+
+      let nx = 0, nz = 0, overlap = 0;
+
+      if (shapeA.round && shB.round) {
+        const dist = Math.hypot(pairVec.x, pairVec.z);
+        const gap = shapeA.r + shB.r;
+        if (dist >= gap) continue;
+
+        overlap = gap - dist;
+        if (dist < 1e-5) { nx = 1; nz = 0; }
+        else { nx = pairVec.x / dist; nz = pairVec.z / dist; }
+
+      } else if (!shapeA.round && !shB.round) {
+        const overX = shapeA.ex + shB.ex - Math.abs(pairVec.x);
+        const overZ = shapeA.ez + shB.ez - Math.abs(pairVec.z);
+        if (overX <= 0 || overZ <= 0) continue;
+
+        // Out along the shallower axis, so a corner touch doesn't fling
+        // things sideways across the whole width of the box.
+        if (overX < overZ) { nx = Math.sign(pairVec.x || 1); overlap = overX; }
+        else               { nz = Math.sign(pairVec.z || 1); overlap = overZ; }
+
+      } else {
+        // Round against box: nearest point on the box to the circle's centre.
+        const roundIsA = shapeA.round;
+        const box = roundIsA ? shB : shapeA;
+        const rad = roundIsA ? shapeA.r : shB.r;
+
+        // pairVec runs a -> b, so flip it when the box is a.
+        const dx = roundIsA ? pairVec.x : -pairVec.x;
+        const dz = roundIsA ? pairVec.z : -pairVec.z;
+
+        const qx = Math.max(-box.ex, Math.min(box.ex, dx));
+        const qz = Math.max(-box.ez, Math.min(box.ez, dz));
+
+        const ox = dx - qx, oz = dz - qz;
+        const dist = Math.hypot(ox, oz);
+
+        if (dist >= rad) continue;
+
+        overlap = rad - dist;
+
+        if (dist < 1e-5) {
+          // Centre is inside the box: push out through the nearest face.
+          const outX = box.ex - Math.abs(dx), outZ = box.ez - Math.abs(dz);
+          if (outX < outZ) nx = Math.sign(dx || 1); else nz = Math.sign(dz || 1);
+          overlap += Math.min(outX, outZ);
+        } else {
+          nx = ox / dist;
+          nz = oz / dist;
+        }
+
+        // The normal was built round-relative; flip it back if b is the round one.
+        if (!roundIsA) { nx = -nx; nz = -nz; }
+      }
+
+      const total = a.mass + b.mass;
+      const aShare = b.mass / total;      // the lighter one moves further
+      const bShare = a.mass / total;
+
+      const aHeld = heldProp && heldProp.id === a.id;
+      const bHeld = heldProp && heldProp.id === b.id;
+
+      if (!aHeld) {
+        a.group.position.x += nx * overlap * aShare;
+        a.group.position.z += nz * overlap * aShare;
+        a.vel.x += nx * overlap * aShare * 6;
+        a.vel.z += nz * overlap * aShare * 6;
+        a.asleep = false;
+      }
+
+      if (!bHeld) {
+        b.group.position.x -= nx * overlap * bShare;
+        b.group.position.z -= nz * overlap * bShare;
+        b.vel.x -= nx * overlap * bShare * 6;
+        b.vel.z -= nz * overlap * bShare * 6;
+        b.asleep = false;
+      }
+    }
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Grab beam
+
+   The line that runs from the player to whatever they are carrying, and the
+   only thing that says a prop is held — there is no crosshair and no text
+   hint. That is deliberate: the beam already points at exactly one object,
+   so anything else would be repeating what the player can see.
+
+   Built as a stretched cylinder rather than a THREE.Line. Line width is a
+   dead parameter in WebGL — every implementation renders one pixel and
+   ignores what you ask for — so a real line would come out hairline thin at
+   any distance, and thinner still once the third-resolution buffer scales it
+   up. A cylinder is geometry and behaves.
+   -------------------------------------------------------------------------- */
+
+const BEAM_COLOR  = 0x5cc8ff;
+const BEAM_RADIUS = 0.028;
+
+const beamUp = new THREE.Vector3(0, 1, 0);
+const beamDir = new THREE.Vector3();
+const beamFrom = new THREE.Vector3();
+
+let beam = null;
+let beamClock = 0;
+
+function ensureBeam() {
+  if (beam) return beam;
+
+  /* A unit cylinder shifted so its base sits on the origin: scaling y then
+     stretches it forward from the anchor instead of growing both ways from
+     the middle. Open-ended, since the caps are never visible. */
+  const geo = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true);
+  geo.translate(0, 0.5, 0);
+
+  const core = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    color: BEAM_COLOR,
+    transparent: true,
+    opacity: 0.55,
+
+    /* Additive, so it reads as light rather than as a painted rod, and
+       brightens where it crosses itself at the ends. depthWrite off for the
+       usual reason — a transparent surface that writes depth hides whatever
+       is drawn after it. */
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    fog: false
+  }));
+
+  // A soft bloom at the far end, where the beam meets the prop.
+  const tip = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 10, 8),
+    new THREE.MeshBasicMaterial({
+      color: BEAM_COLOR,
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: false
+    })
+  );
+
+  core.renderOrder = 8;
+  tip.renderOrder = 8;
+  core.frustumCulled = false;
+  tip.frustumCulled = false;
+
+  beam = { core, tip };
+  scene.add(core, tip);
+  hideBeam();
+
+  return beam;
+}
+
+function hideBeam() {
+  if (!beam) return;
+  beam.core.visible = false;
+  beam.tip.visible = false;
+}
+
+/**
+ * Points the beam from the player's hand to the prop.
+ *
+ * The origin is derived from the character's facing rather than read off a
+ * hand bone. Bone names vary between exports and a missing one would throw;
+ * an offset is approximate but it is never wrong, and at this distance the
+ * difference is a few pixels.
+ */
+function updateBeam(dt, target) {
+  const b = ensureBeam();
+  const p = local.group.position;
+
+  // group.rotation.y is the facing that was actually rendered this frame, which
+  // is what the beam has to agree with — headingTarget leads it slightly.
+  const face = local.group.rotation.y;
+
+  beamFrom.set(
+    p.x + Math.sin(face) * 0.22 + Math.cos(face) * 0.24,
+    p.y + 1.16,
+    p.z + Math.cos(face) * 0.22 - Math.sin(face) * 0.24
+  );
+
+  beamDir.subVectors(target, beamFrom);
+  const len = beamDir.length();
+  if (len < 0.01) { hideBeam(); return; }
+
+  beamDir.divideScalar(len);
+
+  b.core.position.copy(beamFrom);
+  b.core.quaternion.setFromUnitVectors(beamUp, beamDir);
+
+  // Gentle pulse, so a held beam doesn't look like a frozen prop.
+  beamClock += dt;
+  const pulse = 1 + Math.sin(beamClock * 7) * 0.12;
+
+  b.core.scale.set(BEAM_RADIUS * pulse, len, BEAM_RADIUS * pulse);
+  b.core.visible = true;
+
+  b.tip.position.copy(target);
+  b.tip.scale.setScalar(0.075 * pulse);
+  b.tip.visible = true;
+}
+
+/* --------------------------------------------------------------------------
+   Carrying
+
+   A raycast from the centre of the screen, which is where the camera is
+   looking and therefore where the player expects the reach to be.
+   -------------------------------------------------------------------------- */
+
+const holdTarget = new THREE.Vector3();
+
+let propMoveClock = 0;
+
+/**
+ * The prop the player is aiming at, or null.
+ *
+ * Proximity to the aim ray, not an intersection with it. Two reasons, and the
+ * first is the one that mattered:
+ *
+ * Removing the crosshair removed any way to know where an exact ray points.
+ * In a third-person view the centre of the screen is the character's own
+ * back, and the ray carries on past them at whatever angle the camera is
+ * pitched — so "point at the thing" is a guess. Picking whatever sits closest
+ * to that line means a rough gesture toward a prop is enough.
+ *
+ * Second, an exact hit is unreliable on small props. At a typical camera
+ * pitch the ray passes about half a metre above the ground three metres out,
+ * which clears a marble entirely. It would have been grabbable only from
+ * angles the player would have to find by accident.
+ *
+ * Range is still measured from the character, and the prop still has to be
+ * ahead of the ray rather than behind the camera.
+ */
+const aimOrigin = new THREE.Vector3();
+const aimDir = new THREE.Vector3();
+const aimToProp = new THREE.Vector3();
+
+const AIM_CONE = 0.34;   // radians of slack around the aim line
+
+function propUnderAim() {
+  if (!props.size || !local) return null;
+
+  camera.getWorldPosition(aimOrigin);
+  camera.getWorldDirection(aimDir);
+
+  let best = null;
+  let bestAngle = AIM_CONE;
+
+  for (const rec of props.values()) {
+    // Reach is from the character; the ray is only used for direction.
+    if (rec.group.position.distanceTo(local.group.position) > PROP_REACH) continue;
+
+    aimToProp.subVectors(rec.group.position, aimOrigin);
+    const dist = aimToProp.length();
+    if (dist < 0.001) continue;
+
+    aimToProp.divideScalar(dist);
+
+    const along = aimToProp.dot(aimDir);
+    if (along <= 0) continue;              // behind the camera
+
+    /* Angle off the aim line, widened for bigger props so a boulder is as
+       easy to catch as its size suggests rather than needing the same
+       pinpoint gesture as a marble. */
+    const angle = Math.acos(Math.min(1, along)) - Math.atan2(rec.radius, dist);
+
+    if (angle < bestAngle) {
+      bestAngle = angle;
+      best = rec;
+    }
+  }
+
+  return best;
+}
+
+const heldPrev = new THREE.Vector3();
+const heldVel = new THREE.Vector3();
+const heldSpin = new THREE.Quaternion();
+const worldUp = new THREE.Vector3(0, 1, 0);
+
+function spinHeld(angle) {
+  heldSpin.setFromAxisAngle(worldUp, angle);
+  heldProp.group.quaternion.premultiply(heldSpin);
+}
+
+function grabProp() {
+  const rec = propUnderAim();
+  if (!rec) return;
+
+  heldProp = rec;
+
+  // Picking something up stops it dead; it is in your hands now.
+  rec.vel.set(0, 0, 0);
+  rec.angVel.set(0, 0, 0);
+  rec.asleep = false;
+
+  heldPrev.copy(rec.group.position);
+  heldVel.set(0, 0, 0);
+
+  /* Kept at the distance it was found at, so grabbing doesn't jerk it toward
+     or away from you the instant you press the button. Stored camera-relative
+     because that is the ray it rides on, but clamped in character terms —
+     hence the boom length on both bounds. Without it, the near clamp would
+     put a carried prop somewhere behind the player's head. */
+  heldDist = Math.min(CAM_DISTANCE + PROP_HOLD_MAX,
+             Math.max(CAM_DISTANCE + PROP_HOLD_MIN,
+                      camera.position.distanceTo(rec.group.position)));
+
+}
+
+function releaseProp() {
+  if (!heldProp) return;
+
+  const rec = heldProp;
+
+  /* Velocity is measured from how the prop actually moved over the last few
+     frames, not from the camera. Those differ: the prop eases toward the aim
+     point rather than tracking it exactly, so a fast flick with a heavy prop
+     moves the aim a long way and the prop only a little. Reading the prop is
+     what makes a heavy thing hard to throw. */
+  const speed = heldVel.length();
+
+  let vx = 0, vy = 0, vz = 0;
+
+  let spin = null;
+
+  if (speed >= FLING_MIN) {
+    const power = FLING_GAIN * (FLING_MASS_REF / (FLING_MASS_REF + rec.mass));
+    vx = heldVel.x * power;
+    vy = heldVel.y * power;
+    vz = heldVel.z * power;
+
+    /* Tumble, about an axis across the throw. Thrown objects rotate because
+       the force is never applied through their centre, and a prop that flies
+       dead flat looks like a projectile rather than a thing that was
+       chucked. Divided by size, so a marble spins hard and a boulder barely
+       turns, which is how the two actually behave. */
+    const rate = Math.min(TUMBLE_MAX,
+      (speed / Math.max(0.25, rec.radius)) * TUMBLE_GAIN);
+
+    spin = new THREE.Vector3(-vz, 0, vx).normalize().multiplyScalar(rate);
+
+    // A little wobble off that axis, so no two throws are identical.
+    spin.y += (Math.random() - 0.5) * spin.length() * 0.5;
+  }
+
+  heldProp = null;
+  hideBeam();
+
+  rec.holdUntil = 0;
+  rec.asleep = false;
+
+  const packet = { t: 'prop-drop', id: rec.id, vx, vy, vz };
+
+  if (spin) {
+    packet.wx = +spin.x.toFixed(2);
+    packet.wy = +spin.y.toFixed(2);
+    packet.wz = +spin.z.toFixed(2);
+  }
+
+  if (propsAuthoritative()) {
+    rec.vel.set(vx, vy, vz);
+    if (spin) rec.angVel.copy(spin);
+    broadcastToClients(packet);
+  } else {
+    sendToHost(packet);
+  }
+}
+
+/** Moves whatever is being carried, and tells the room about it. */
+function stepHeldProp(dt) {
+  if (!heldProp) return;
+
+  // Dropped out from under us — deleted by the host, or the room reset.
+  if (!props.has(heldProp.id)) { heldProp = null; hideBeam(); return; }
+
+  camera.getWorldDirection(spawnDir);
+  holdTarget.copy(camera.position).addScaledVector(spawnDir, heldDist);
+
+  // Never below the floor, and never inside it.
+  holdTarget.y = Math.max(heldProp.def.lift || 0.3, holdTarget.y);
+
+  /* Eased, and more slowly for heavier props, so a big object lags behind
+     the aim point and a small one tracks it closely. Mass earns its keep in
+     the feel of carrying as much as in the pushing, and it is also what makes
+     a boulder hard to fling. */
+  const follow = 16 / (1 + heldProp.mass * 0.5);
+  heldProp.group.position.lerp(holdTarget, Math.min(1, dt * follow));
+
+  /* Measured, not predicted. Exponential smoothing so a single stuttered
+     frame doesn't decide how hard the throw comes out. */
+  heldVel.lerp(
+    spawnDir.subVectors(heldProp.group.position, heldPrev).divideScalar(Math.max(dt, 0.001)),
+    0.35
+  );
+  heldPrev.copy(heldProp.group.position);
+
+  updateBeam(dt, heldProp.group.position);
+
+  /* Turning while carrying happens on the world's vertical, not the prop's
+     own — rotateY would spin it about whatever axis it had tumbled onto,
+     which is unpredictable once it is no longer upright. */
+  if (keys.has('KeyQ')) spinHeld(-dt * 2.4);
+  if (keys.has('KeyE')) spinHeld(dt * 2.4);
+
+  propMoveClock += dt;
+  if (propMoveClock >= 1 / PROP_NET_HZ) {
+    propMoveClock = 0;
+    sendPropMove(heldProp);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   The menu
+   -------------------------------------------------------------------------- */
+
+function buildInternet() {
+  const grid = el('net-grid');
+
+  for (const def of PROPS) {
+    const btn = document.createElement('button');
+    btn.className = 'net-item';
+    btn.type = 'button';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'net-swatch';
+
+    // Textured models have no single base colour, so the outline tint stands
+    // in for one.
+    const tint = def.color !== undefined ? def.color : def.outline;
+    swatch.style.background = '#' + (tint || 0x666666).toString(16).padStart(6, '0');
+
+    const label = document.createElement('span');
+    label.textContent = def.name;
+
+    btn.append(swatch, label);
+    btn.addEventListener('click', () => {
+      if (requestSpawn(def.id)) closeInternet();
+      else showSpawnCooldown();
+    });
+
+    grid.appendChild(btn);
+  }
+}
+
+function openInternet() {
+  if (internetOpen || !local || chatOpen) return;
+
+  internetOpen = true;
+  keys.clear();                    // or a held direction sticks while browsing
+  el('internet').classList.remove('hidden');
+
+  // Opened inside a cooldown: show that before anything is clicked.
+  if (spawnCooldownLeft() > 0) showSpawnCooldown();
+
+  // The cursor is needed to click a tile. Releasing the lock normally raises
+  // the pause menu; the pointerlockchange handler checks internetOpen and
+  // stands down.
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function closeInternet(relock = true) {
+  if (!internetOpen) return;
+
+  internetOpen = false;
+  el('internet').classList.add('hidden');
+
+  if (relock && !IS_TOUCH && relockPointer) relockPointer();
+}
+
+/**
+ * Marks the menu as rate-limited and counts it down in place.
+ *
+ * Shown rather than silently ignored. A click that does nothing reads as a
+ * broken button, and the player's next move is to click harder.
+ */
+let spawnCoolTimer = null;
+
+function showSpawnCooldown() {
+  const grid = el('net-grid');
+
+  grid.classList.remove('cooling');
+  void grid.offsetWidth;                  // restart the flash if already running
+  grid.classList.add('cooling');
+
+  clearTimeout(spawnCoolTimer);
+  spawnCoolTimer = setTimeout(
+    () => grid.classList.remove('cooling'),
+    Math.max(120, Math.ceil(spawnCooldownLeft()))
+  );
+}
+
+/* --------------------------------------------------------------------------
    Frame loop
    -------------------------------------------------------------------------- */
 
@@ -1481,6 +3270,8 @@ function tick() {
   stepLocal(dt);
   for (const avatar of remotes.values()) avatar.stepRemote(dt);
   stepCamera(dt);
+  stepHeldProp(dt);
+  stepProps(dt);
 
   /* The shadow camera moves with the player, and moving it by fractions of a
      unit each frame makes every shadow edge crawl and fizz — easily mistaken
@@ -1511,7 +3302,7 @@ function bindInput() {
     // chatOpen is checked before activeElement deliberately. If focus ever
     // slips out of the field, the letters are lost either way — but without
     // this the character also starts walking while you type.
-    if (chatOpen) return;
+    if (chatOpen || internetOpen) return;
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
     keys.add(e.code);
     if (e.code === 'Space') e.preventDefault();
@@ -1562,6 +3353,11 @@ function bindInput() {
          moment the browser hands focus back to the body, so take it back. */
       if (chatOpen) { keys.clear(); focusChatInput(); return; }
 
+      /* Same reasoning for The Internet: it releases the cursor on purpose so
+         a tile can be clicked, and without this the pause menu would open
+         behind it. */
+      if (internetOpen) { keys.clear(); return; }
+
       clickLayer.classList.toggle('hidden', pointerLocked);
 
       // Escape releases the cursor, which is the browser's own shortcut and
@@ -1573,6 +3369,71 @@ function bindInput() {
       else keys.clear();
     });
   }
+
+  /* Carrying is on the mouse button rather than a key, and held rather than
+     toggled — the same grammar as every physics gun this is borrowed from.
+
+     Gated on being in-game rather than on pointer lock. Lock is unavailable
+     in a sandboxed iframe and can be dropped by the browser for reasons the
+     page never hears about, and in either case requiring it means the button
+     silently does nothing with no way to tell why. Chat and the spawn menu
+     still block it, since both want the cursor for themselves. */
+  addEventListener('mousedown', e => {
+    if (e.button !== 0 || !local || chatOpen || internetOpen) return;
+    if (clickLayer && !clickLayer.classList.contains('hidden')) return;   // paused
+    grabProp();
+  });
+
+  addEventListener('mouseup', e => {
+    if (e.button === 0) releaseProp();
+  });
+
+  /* Push and pull whatever is carried. Passive is off because the page would
+     otherwise scroll behind the canvas on trackpads. */
+  addEventListener('wheel', e => {
+    if (!heldProp) return;
+    e.preventDefault();
+
+    heldDist = Math.min(CAM_DISTANCE + PROP_HOLD_MAX,
+               Math.max(CAM_DISTANCE + PROP_HOLD_MIN,
+                        heldDist + Math.sign(e.deltaY) * 0.4));
+  }, { passive: false });
+
+  addEventListener('keydown', e => {
+    if (chatOpen || !local) return;
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+
+    if (e.code === 'Escape' && internetOpen) {
+      // Escape has already released the pointer lock by the time this runs,
+      // so closing needs to ask for it back rather than assume it is held.
+      e.preventDefault();
+      closeInternet();
+      return;
+    }
+
+    if (e.code === 'Enter') {
+      /* preventDefault matters more than usual here. A browser fires a click
+         on whatever button currently holds focus when Enter is pressed, so
+         without it, opening the menu after having clicked Resume would also
+         re-trigger Resume. */
+      e.preventDefault();
+      if (internetOpen) closeInternet();
+      else openInternet();
+      return;
+    }
+
+    if (internetOpen) return;
+
+    // Delete what you are holding, or what you are looking at.
+    if (e.code === 'KeyR') {
+      const rec = heldProp || propUnderAim();
+      if (rec) {
+        e.preventDefault();
+        if (heldProp && heldProp.id === rec.id) { heldProp = null; hideBeam(); }
+        requestDespawn(rec.id);
+      }
+    }
+  });
 
   addEventListener('mousemove', e => {
     if (!pointerLocked) return;
@@ -1963,6 +3824,10 @@ function onHostMessage(conn, msg) {
   if (msg.t === 'hello') {
     ensureRemote(conn.peer, msg.name, msg.skin);
     renderRoster();
+
+    // Everything already in the world, so a late joiner sees the same room as
+    // everyone else rather than an empty one that fills in as things move.
+    conn.send({ t: 'prop-list', props: propSnapshot() });
   } else if (msg.t === 'state') {
     const avatar = ensureRemote(conn.peer, msg.n, msg.k);
     applyState(avatar, msg);
@@ -1987,7 +3852,43 @@ function onHostMessage(conn, msg) {
     for (const [id, c] of connections) {
       if (id !== conn.peer && c.open) c.send(packet);
     }
+  } else if (msg.t === 'prop-spawn') {
+    /* Only the host mints ids. Two clients spawning in the same frame would
+       otherwise pick the same one and end up sharing a prop.
+
+       The cooldown is re-checked here as well. A client enforces its own,
+       but that copy is the one a modified build would delete first, so the
+       host keeps its own clock per peer and simply ignores anything early. */
+    const now = performance.now();
+    const last = clientSpawnAt.get(conn.peer) || -Infinity;
+
+    const def = PROP_BY_ID.get(msg.kind);
+    if (def && now - last >= SPAWN_COOLDOWN) {
+      clientSpawnAt.set(conn.peer, now);
+      const id = 'p' + (++propSeq);
+      addProp(id, msg.kind, msg.x, msg.y, msg.z, msg.ry);
+
+      const packet = { t: 'prop-add', id, kind: msg.kind,
+                       x: msg.x, y: msg.y, z: msg.z, ry: msg.ry };
+      for (const c of connections.values()) if (c.open) c.send(packet);
+    }
+  } else if (msg.t === 'prop-hold') {
+    /* A client is carrying this one. The holder wins over the simulation
+       while they have it — anything else means fighting them at 15Hz — so
+       the host takes their position and pauses physics for that prop. */
+    applyPackedProp(msg.p);
+    broadcastToClients(msg, conn.peer);
+  } else if (msg.t === 'prop-drop') {
+    applyPropDrop(msg);
+    broadcastToClients(msg, conn.peer);
+  } else if (msg.t === 'prop-del') {
+    if (props.has(msg.id)) {
+      removeProp(msg.id);
+      const packet = { t: 'prop-remove', id: msg.id };
+      for (const c of connections.values()) if (c.open) c.send(packet);
+    }
   } else if (msg.t === 'bye') {
+    clientSpawnAt.delete(conn.peer);
     dropPeer(conn.peer);
   } else if (msg.t === 'probe') {
     // Someone on the title screen asking how busy this room is. Answer with a
@@ -2012,6 +3913,18 @@ function onClientMessage(msg) {
   } else if (msg.t === 'typing') {
     const avatar = msg.id === 'host' ? remotes.get('host') : remotes.get(msg.id);
     if (avatar) avatar.setTyping(msg.on);
+  } else if (msg.t === 'prop-list') {
+    applyPropList(msg.props);
+  } else if (msg.t === 'prop-add') {
+    addProp(msg.id, msg.kind, msg.x, msg.y, msg.z, msg.ry);
+  } else if (msg.t === 'prop-remove') {
+    removeProp(msg.id);
+  } else if (msg.t === 'prop-sync') {
+    for (const a of msg.a) applyPackedProp(a);
+  } else if (msg.t === 'prop-hold') {
+    applyPackedProp(msg.p);
+  } else if (msg.t === 'prop-drop') {
+    applyPropDrop(msg);
   } else if (msg.t === 'snapshot') {
     const seen = new Set();
 
@@ -2224,6 +4137,8 @@ function stepNetwork(dt) {
     for (const conn of connections.values()) {
       if (conn.open) conn.send(snapshot);
     }
+
+    broadcastProps();
   } else {
     const conn = connections.get('host');
     if (conn && conn.open) conn.send(localState());
@@ -2272,6 +4187,8 @@ function teardownNetwork() {
 function leaveGame() {
   reclaiming = false;
   closeChat();
+  closeInternet(false);          // no relock; we're going back to the title
+  clearProps();
   teardownNetwork();
 
   for (const a of remotes.values()) a.dispose();
@@ -2543,6 +4460,30 @@ function bindChat() {
 
   el('btn-chat').addEventListener('click', e => { e.preventDefault(); openChat(); });
 
+  el('btn-net').addEventListener('touchstart', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    openInternet();
+  }, { passive: false });
+
+  el('btn-net').addEventListener('click', e => { e.preventDefault(); openInternet(); });
+
+  /* Held, like the mouse button. The ray comes from the centre of the screen
+     either way, so on touch you aim by turning rather than by pointing. */
+  const grabBtn = el('btn-grab');
+
+  grabBtn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    grabProp();
+  }, { passive: false });
+
+  grabBtn.addEventListener('touchend', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    releaseProp();
+  }, { passive: false });
+
   /* On a phone the keyboard covers the bottom of the screen, including the
      field being typed into. visualViewport reports the space actually left
      visible, so the bar can be lifted to sit just above it. */
@@ -2701,6 +4642,7 @@ try {
 } catch {}
 
 renderSkins();
+buildInternet();
 
 el('buildtag').textContent = 'build ' + BUILD;
 
@@ -2748,6 +4690,8 @@ el('btn-quit').addEventListener('click', e => {
 });
 
 // The in-game leave button, for touch where there is no pause menu.
+el('btn-net-close').addEventListener('click', () => closeInternet());
+
 el('btn-leave').addEventListener('click', leaveGame);
 el('btn-leave').addEventListener('touchstart', e => {
   e.preventDefault();

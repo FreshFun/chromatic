@@ -72,7 +72,7 @@
 <div id="roster" class="hidden"></div>
 
 <div id="hud" class="hidden">
-  <b>WASD</b> move · <b>Space</b> jump · <b>T</b> chat · <b>M</b> sound · <b>Mouse</b> look · <b>Esc</b> pause<span id="mutehint"></span>
+  <b>WASD</b> move · <b>Space</b> jump · <b>T</b> chat · <b>Enter</b> internet · <b>Hold LMB</b> grab · <b>Scroll</b> reach · <b>R</b> delete · <b>M</b> sound · <b>Esc</b> pause<span id="mutehint"></span>
 </div>
 
 <div id="click" class="hidden">
@@ -101,11 +101,28 @@
   </div>
 </div>
 
+<!-- The Internet. A spawn menu, opened with Enter on desktop or the 🌐 button
+     on touch. Deliberately a full overlay rather than a sidebar: it releases
+     the pointer lock either way, so half-covering the view would only make it
+     look like the game was still live when it isn't. -->
+<div id="internet" class="hidden">
+  <div class="net-panel">
+    <div class="net-head">
+      <h2>THE INTERNET</h2>
+      <button id="btn-net-close" type="button" aria-label="Close">esc</button>
+    </div>
+    <div id="net-grid"></div>
+    <p class="net-foot">Hold <b>LMB</b> to carry · scroll to reach · <b>Q</b>/<b>E</b> turn · flick to fling · <b>R</b> deletes</p>
+  </div>
+</div>
+
 <!-- Touch controls. The stick is positioned wherever the thumb lands rather
      than pinned to a fixed spot, so it works for any hand size or grip. -->
 <div id="touch" class="hidden">
   <div id="stick" class="hidden"><div id="knob"></div></div>
   <button id="btn-chat" aria-label="Chat">💬</button>
+  <button id="btn-net" aria-label="The Internet">🌐</button>
+  <button id="btn-grab" aria-label="Grab">GRAB</button>
   <button id="btn-jump" aria-label="Jump">JUMP</button>
 </div>
 

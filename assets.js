@@ -24,4 +24,17 @@ function toBuffer(b64) {
   return bytes.buffer;
 }
 
-export { MODELS, toBuffer };
+/* =========================================================
+   Prop models — glTF binary (.glb), base64.
+
+   Separate from MODELS above because they load through a different path:
+   MODELS are FBX and go through FBXLoader, these go through GLTFLoader.
+   glTF is the better format for props — smaller on the wire, textures packed
+   into the same file, and no editor cruft — while the character stays FBX
+   because that is what Mixamo rigs export and what its animation pipeline
+   expects.
+   ========================================================= */
+const PROP_MODELS = {};
+
+export { MODELS, PROP_MODELS, toBuffer };
+
