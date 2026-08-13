@@ -5,7 +5,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { MODELS, PROP_MODELS, toBuffer } from './assets.js';
+import { MODELS, PROP_MODELS, SOUNDS, toBuffer } from './assets.js';
 
 
 /* ==========================================================================
@@ -15,7 +15,7 @@ import { MODELS, PROP_MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v44 stacking';
+const BUILD = 'v46 wood';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -708,6 +708,53 @@ const sfx = {
     this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+
+    this.loadClips();
+  },
+
+  clips: {},
+
+  /**
+   * Decodes the recorded sounds.
+   *
+   * Fire and forget. Decoding is asynchronous and the first burst may well
+   * happen before it finishes, so every play checks whether its clip has
+   * arrived rather than assuming — a missing sound is better than a thrown
+   * error in the middle of the frame loop.
+   */
+  loadClips() {
+    for (const [name, b64] of Object.entries(SOUNDS)) {
+      try {
+        this.ctx.decodeAudioData(
+          toBuffer(b64),
+          buffer => { this.clips[name] = buffer; },
+          () => {}
+        );
+      } catch {}
+    }
+  },
+
+  /** Plays a decoded clip at a point in the world. */
+  clip(name, pos, gain = 1) {
+    const buffer = this.clips[name];
+    if (!buffer) return;
+
+    const c = this.begin(pos);
+    if (!c) return;
+
+    const { ctx, out, t } = c;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+
+    // A touch of pitch variation, so repeats don't read as the same file.
+    src.playbackRate.value = 0.94 + Math.random() * 0.12;
+
+    const g = ctx.createGain();
+    g.gain.value = gain;
+
+    src.connect(g).connect(out);
+    src.start(t);
   },
 
   /** A tab switch suspends the context; this brings it back. */
@@ -1378,6 +1425,13 @@ const move    = new THREE.Vector3();
 const travel  = new THREE.Vector3();
 
 function stepLocal(dt) {
+  // In pieces. The camera keeps following the spot, but nothing moves.
+  if (bursting) {
+    local.speed = 0;
+    local.stepTag(dt);
+    return;
+  }
+
   // Camera-relative movement, flattened onto the ground plane.
   forward.set(Math.sin(yaw), 0, Math.cos(yaw));
   right.set(-forward.z, 0, forward.x);
@@ -2986,6 +3040,272 @@ function separateProps(list, dt) {
 }
 
 /* --------------------------------------------------------------------------
+   Bursting
+
+   Detonating your own avatar into a pile of blocks.
+
+   The debris is deliberately *not* run through the prop system, even though
+   props already tumble and stack and would have taken no extra code. Two
+   reasons. A burst is twenty-odd pieces against a sixty-prop ceiling, so two
+   deaths would fill the room and start evicting things people had actually
+   spawned. And every prop is a networked object whose transform the host
+   broadcasts; twenty of them per death, several times a second, for something
+   that exists for four seconds, is a lot of traffic for confetti.
+
+   So debris is local, visual, and disposable. Each client is told that a
+   burst happened and builds its own from a shared seed, which is why the
+   packet carries one — everyone sees the same pile fly the same way without
+   a single position ever crossing the wire.
+   -------------------------------------------------------------------------- */
+
+/* Wood, not the player's skin.
+
+   The pieces used to inherit whichever skin you were wearing, which sounds
+   tidier but reads worse: a chrome player shattering into chrome blocks looks
+   like the character came apart, whereas plain wooden blocks read as a gag —
+   the avatar was never made of anything, and the game is dropping the act.
+   Roughness high and metalness at zero for the same reason; a glossy block
+   would sit in the same visual family as the characters instead of against
+   them. */
+const BURST_COLOR = 0xc49a63;
+const BURST_ROUGH = 0.82;
+
+const BURST_PIECES = 24;
+const BURST_LIFE   = 4.2;    // seconds a pile lasts
+const BURST_FADE   = 1.4;    // of which the last are spent fading out
+const BURST_FORCE  = 5.2;    // outward kick
+const BURST_LIFT   = 4.0;
+
+const DEBRIS_GRAVITY = -19;
+const DEBRIS_BOUNCE  = 0.36;
+const DEBRIS_DRAG    = 1.1;
+const DEBRIS_SPIN    = 5.0;
+
+const piles = [];            // active debris, oldest first
+
+let bursting = false;        // the local player is currently a pile of blocks
+let burstClock = 0;
+
+/**
+ * Small deterministic generator.
+ *
+ * Math.random would give every client a different pile from the same event,
+ * so the seed travels with the packet and each machine replays the identical
+ * sequence. Mulberry32: short, fast, and good enough that a burst never looks
+ * patterned.
+ */
+function seededRandom(seed) {
+  let a = seed >>> 0;
+
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const debrisGeo = new THREE.BoxGeometry(1, 1, 1);
+const burstAt = new THREE.Vector3();
+
+/**
+ * Builds a pile of blocks where a character was standing.
+ *
+ * One material for the whole pile rather than one per piece: they are all the
+ * same colour and they all fade together, so a single shared material is both
+ * cheaper and the only way the fade stays in step.
+ */
+function spawnBurst(x, y, z, seed, vx = 0, vz = 0) {
+  const rnd = seededRandom(seed);
+
+  const material = new THREE.MeshStandardMaterial({
+    color: BURST_COLOR,
+    metalness: 0,
+    roughness: BURST_ROUGH,
+    envMapIntensity: ENV_INTENSITY,
+    transparent: true,
+    opacity: 1
+  });
+
+  const pile = { material, pieces: [], clock: 0 };
+
+  for (let i = 0; i < BURST_PIECES; i++) {
+    const size = 0.14 + rnd() * 0.18;
+
+    const mesh = new THREE.Mesh(debrisGeo, material);
+    mesh.scale.setScalar(size);
+    mesh.castShadow = true;
+
+    /* Spread up the body rather than all from one point, so the pile starts
+       out roughly the shape of the character it replaced. */
+    const height = rnd() * 1.7;
+    const spread = 0.22;
+
+    mesh.position.set(
+      x + (rnd() - 0.5) * spread,
+      y + height,
+      z + (rnd() - 0.5) * spread
+    );
+
+    mesh.rotation.set(rnd() * 6.283, rnd() * 6.283, rnd() * 6.283);
+
+    // Outward from the spine, so it bursts rather than dropping in a heap.
+    const angle = rnd() * Math.PI * 2;
+    const force = BURST_FORCE * (0.4 + rnd() * 0.8);
+
+    pile.pieces.push({
+      mesh,
+      vel: new THREE.Vector3(
+        Math.sin(angle) * force + vx,
+        BURST_LIFT * (0.5 + rnd() * 0.9),
+        Math.cos(angle) * force + vz
+      ),
+      spin: new THREE.Vector3(
+        (rnd() - 0.5) * DEBRIS_SPIN,
+        (rnd() - 0.5) * DEBRIS_SPIN,
+        (rnd() - 0.5) * DEBRIS_SPIN
+      ),
+      rest: size * 0.5
+    });
+
+    scene.add(mesh);
+  }
+
+  piles.push(pile);
+
+  burstAt.set(x, y + 1, z);
+  sfx.clip('burst', burstAt, 0.9);
+
+  return pile;
+}
+
+const debrisQuat = new THREE.Quaternion();
+const debrisAxis = new THREE.Vector3();
+
+/** Falls, bounces, tumbles, fades, and finally clears itself away. */
+function stepPiles(dt) {
+  for (let i = piles.length - 1; i >= 0; i--) {
+    const pile = piles[i];
+    pile.clock += dt;
+
+    if (pile.clock >= BURST_LIFE) {
+      for (const p of pile.pieces) scene.remove(p.mesh);
+      pile.material.dispose();
+      piles.splice(i, 1);
+      continue;
+    }
+
+    // Fade over the tail of the life, not the whole of it.
+    const left = BURST_LIFE - pile.clock;
+    pile.material.opacity = left < BURST_FADE ? left / BURST_FADE : 1;
+
+    for (const p of pile.pieces) {
+      p.vel.y += DEBRIS_GRAVITY * dt;
+
+      p.mesh.position.addScaledVector(p.vel, dt);
+
+      if (p.mesh.position.y <= p.rest) {
+        p.mesh.position.y = p.rest;
+
+        // Only bounce off a real impact, or a settled piece jitters forever.
+        p.vel.y = p.vel.y < -1.0 ? -p.vel.y * DEBRIS_BOUNCE : 0;
+
+        const ground = Math.max(0, 1 - 4 * dt);
+        p.vel.x *= ground;
+        p.vel.z *= ground;
+        p.spin.multiplyScalar(ground);
+      }
+
+      const drag = Math.max(0, 1 - DEBRIS_DRAG * dt);
+      p.vel.x *= drag;
+      p.vel.z *= drag;
+
+      const rate = p.spin.length();
+      if (rate > 1e-4) {
+        debrisAxis.copy(p.spin).divideScalar(rate);
+        debrisQuat.setFromAxisAngle(debrisAxis, rate * dt);
+        p.mesh.quaternion.premultiply(debrisQuat);
+      }
+    }
+  }
+}
+
+/** Removes every pile at once, for leaving the room. */
+function clearPiles() {
+  for (const pile of piles) {
+    for (const p of pile.pieces) scene.remove(p.mesh);
+    pile.material.dispose();
+  }
+  piles.length = 0;
+}
+
+/** Detonates the local player. */
+function burstLocal() {
+  if (bursting || !local || chatOpen || internetOpen) return;
+
+  bursting = true;
+  burstClock = 0;
+
+  releaseProp();
+
+  const p = local.group.position;
+  const seed = (Math.random() * 0xffffffff) >>> 0;
+
+  const dir = travel.clone().multiplyScalar(local.speed * 0.4);
+
+  spawnBurst(p.x, p.y, p.z, seed, dir.x, dir.z);
+
+  local.group.visible = false;
+  keys.clear();
+
+  if (peer) {
+    const packet = {
+      t: 'burst', id: myId || 'host', seed,
+      x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2),
+      vx: +dir.x.toFixed(2), vz: +dir.z.toFixed(2)
+    };
+
+    if (isHost) broadcastToClients(packet);
+    else sendToHost(packet);
+  }
+}
+
+/** Puts the player back together once the blocks have gone. */
+function stepBurst(dt) {
+  if (!bursting) return;
+
+  burstClock += dt;
+  if (burstClock < BURST_LIFE) return;
+
+  bursting = false;
+  local.group.visible = true;
+
+  // Back on the ground wherever the pile fell, upright and stationary.
+  local.velY = 0;
+  local.speed = 0;
+  local.grounded = true;
+  local.jumpPhase = 'none';
+}
+
+/** Someone else blew up. */
+function applyBurst(msg) {
+  const avatar = msg.id === 'host' ? remotes.get('host') : remotes.get(msg.id);
+
+  spawnBurst(msg.x, msg.y, msg.z, msg.seed >>> 0, msg.vx, msg.vz);
+
+  if (!avatar) return;
+
+  avatar.group.visible = false;
+  if (avatar.tag) avatar.tag.visible = false;
+
+  clearTimeout(avatar.burstTimer);
+  avatar.burstTimer = setTimeout(() => {
+    avatar.group.visible = true;
+    if (avatar.tag) avatar.tag.visible = true;
+  }, BURST_LIFE * 1000);
+}
+
+/* --------------------------------------------------------------------------
    Grab beam
 
    The line that runs from the player to whatever they are carrying, and the
@@ -3421,6 +3741,8 @@ function tick() {
   stepCamera(dt);
   stepHeldProp(dt);
   stepProps(dt);
+  stepPiles(dt);
+  stepBurst(dt);
 
   /* The shadow camera moves with the player, and moving it by fractions of a
      unit each frame makes every shadow edge crawl and fizz — easily mistaken
@@ -3528,7 +3850,7 @@ function bindInput() {
      silently does nothing with no way to tell why. Chat and the spawn menu
      still block it, since both want the cursor for themselves. */
   addEventListener('mousedown', e => {
-    if (e.button !== 0 || !local || chatOpen || internetOpen) return;
+    if (e.button !== 0 || !local || chatOpen || internetOpen || bursting) return;
     if (clickLayer && !clickLayer.classList.contains('hidden')) return;   // paused
     grabProp();
   });
@@ -4027,6 +4349,9 @@ function onHostMessage(conn, msg) {
        the host takes their position and pauses physics for that prop. */
     applyPackedProp(msg.p);
     broadcastToClients(msg, conn.peer);
+  } else if (msg.t === 'burst') {
+    applyBurst(msg);
+    broadcastToClients(msg, conn.peer);
   } else if (msg.t === 'prop-drop') {
     applyPropDrop(msg);
     broadcastToClients(msg, conn.peer);
@@ -4072,8 +4397,8 @@ function onClientMessage(msg) {
     for (const a of msg.a) applyPackedProp(a);
   } else if (msg.t === 'prop-hold') {
     applyPackedProp(msg.p);
-  } else if (msg.t === 'prop-drop') {
-    applyPropDrop(msg);
+  } else if (msg.t === 'burst') {
+    applyBurst(msg);
   } else if (msg.t === 'snapshot') {
     const seen = new Set();
 
@@ -4354,6 +4679,8 @@ function teardownNetwork() {
 
 function leaveGame() {
   reclaiming = false;
+  bursting = false;
+  clearPiles();
   closeChat();
   closeInternet(false);          // no relock; we're going back to the title
   clearProps();
@@ -4618,6 +4945,7 @@ function bindChat() {
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
     if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
     if (e.code === 'KeyM') { e.preventDefault(); toggleMute(); }
+    if (e.code === 'BracketRight') { e.preventDefault(); burstLocal(); }
   });
 
   el('btn-chat').addEventListener('touchstart', e => {
@@ -4635,6 +4963,14 @@ function bindChat() {
   }, { passive: false });
 
   el('btn-net').addEventListener('click', e => { e.preventDefault(); openInternet(); });
+
+  el('btn-burst').addEventListener('touchstart', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    burstLocal();
+  }, { passive: false });
+
+  el('btn-burst').addEventListener('click', e => { e.preventDefault(); burstLocal(); });
 
   /* Held, like the mouse button. The ray comes from the centre of the screen
      either way, so on touch you aim by turning rather than by pointing. */

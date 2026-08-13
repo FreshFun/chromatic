@@ -804,6 +804,26 @@ button.ghost:hover:not(:disabled) { border-color: var(--signal); }
 
 #btn-net:active { background: rgba(232, 237, 243, .82); }
 
+/* Same pill again, stacked above the others. */
+#btn-burst {
+  position: absolute;
+  right: 36px;
+  bottom: 266px;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  font-size: 24px;
+  line-height: 1;
+  background: rgba(8, 9, 11, .42);
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#btn-burst:active { background: rgba(232, 237, 243, .82); }
+
 /* Left side, opposite jump — carrying and jumping want different thumbs. */
 #btn-grab {
   position: absolute;
@@ -834,7 +854,8 @@ body.touch #hud { display: none; }
 
 body.touch #btn-jump { bottom: calc(40px + env(safe-area-inset-bottom)); }
 body.touch #btn-chat { bottom: calc(142px + env(safe-area-inset-bottom)); }
-body.touch #btn-net  { bottom: calc(204px + env(safe-area-inset-bottom)); }
+body.touch #btn-net   { bottom: calc(204px + env(safe-area-inset-bottom)); }
+body.touch #btn-burst { bottom: calc(266px + env(safe-area-inset-bottom)); }
 body.touch #btn-grab { bottom: calc(46px + env(safe-area-inset-bottom)); }
 
 body.touch #roomtag { top: calc(14px + env(safe-area-inset-top)); }
@@ -843,6 +864,7 @@ body.touch #roster  { top: calc(14px + env(safe-area-inset-top)); }
 /* Touch-only; a desktop player has keys for all three. */
 body:not(.touch) #btn-chat,
 body:not(.touch) #btn-net,
+body:not(.touch) #btn-burst,
 body:not(.touch) #btn-grab { display: none; }
 
 /* Stops the browser treating a control drag as a page scroll or a
