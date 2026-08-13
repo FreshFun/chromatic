@@ -15,7 +15,7 @@ import { MODELS, PROP_MODELS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v42 climb';
+const BUILD = 'v43 net push';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -2006,8 +2006,21 @@ const collideVec = new THREE.Vector3();
  * of the feet is treated as floor and skipped for pushing, so you step up
  * onto it instead of being stopped by its side.
  */
-function resolveCollisions(avatar) {
-  const pos = avatar.group.position;
+/* Somewhere to throw away the corrections when an avatar is being resolved
+   only so that it can shove things. */
+const pushScratch = new THREE.Vector3();
+
+/**
+ * Resolves one avatar against the props.
+ *
+ * `move` is what lets the host run this for players it does not control. A
+ * remote avatar's position arrives over the network and must not be altered
+ * locally — but it still has to push things, and the push falls out of the
+ * same overlap test. With move off, the corrections are written to a scratch
+ * vector and dropped; only the shoves survive.
+ */
+function resolveCollisions(avatar, move = true) {
+  const pos = move ? avatar.group.position : pushScratch.copy(avatar.group.position);
   let floor = 0;
 
   /* A client resolves itself against props so it never walks through one,
@@ -2086,7 +2099,7 @@ function resolveCollisions(avatar) {
         /* Split by mass. The player takes the remainder of the correction,
            so a light prop skitters away and a heavy one barely gives — which
            is the whole point of deriving mass from size. */
-        const share = pushProp(rec, -nx, -nz, avatar.speed, canPush);
+        const share = pushProp(rec, -nx, -nz, avatar.speed, canPush, want - dist);
         const mine = 1 - share;
 
         pos.x = cx + nx * (dist + (want - dist) * mine);
@@ -2114,7 +2127,7 @@ function resolveCollisions(avatar) {
         pos.x = cx + want;
       } else {
         const nx = dx / dist, nz = dz / dist;
-        const share = pushProp(rec, -nx, -nz, avatar.speed, canPush);
+        const share = pushProp(rec, -nx, -nz, avatar.speed, canPush, want - dist);
         const mine = 1 - share;
 
         pos.x = cx + nx * (dist + (want - dist) * mine);
@@ -2144,8 +2157,8 @@ function resolveCollisions(avatar) {
 
       const sx = Math.sign(dx || 1), sz = Math.sign(dz || 1);
       const share = overX < overZ
-        ? pushProp(rec, -sx, 0, avatar.speed, canPush)
-        : pushProp(rec, 0, -sz, avatar.speed, canPush);
+        ? pushProp(rec, -sx, 0, avatar.speed, canPush, overX)
+        : pushProp(rec, 0, -sz, avatar.speed, canPush, overZ);
 
       const mine = 1 - share;
 
@@ -2156,7 +2169,7 @@ function resolveCollisions(avatar) {
     }
   }
 
-  avatar.floorY = floor;
+  if (move) avatar.floorY = floor;
 }
 
 /* --------------------------------------------------------------------------
@@ -2401,9 +2414,25 @@ function propMass(collider, half, radius) {
  * A target is also closer to what is actually happening: you push something
  * along at roughly your own speed, not harder the longer you touch it.
  */
-function pushProp(rec, dx, dz, speed, canPush = true) {
+function pushProp(rec, dx, dz, speed, canPush = true, depth = 0) {
   const share = PLAYER_MASS / (PLAYER_MASS + rec.mass);
-  if (!canPush) return share;
+
+  if (!canPush) {
+    /* A client, guessing. It is not allowed to run the simulation, so the
+       authoritative shove will not arrive for a round trip — and a crate that
+       does not budge until a packet comes back does not read as latency, it
+       reads as broken. So the overlap is resolved locally for the look of the
+       thing, and the next sync overwrites it.
+
+       Position only, never velocity. Velocity would keep integrating a guess
+       that nothing here is authoritative over, and the two copies would walk
+       apart. A position nudge is corrected by the very next packet. */
+    if (depth > 0) {
+      rec.group.position.x += dx * depth * share;
+      rec.group.position.z += dz * depth * share;
+    }
+    return share;
+  }
 
   const want = speed * share * PUSH_GAIN;
   const along = rec.vel.x * dx + rec.vel.z * dz;
@@ -2423,8 +2452,13 @@ function stepProps(dt) {
   }
 
   if (!propsAuthoritative()) {
-    // Clients ease toward the last transform the authority sent. Snapping
-    // would show every packet as a jump at 15Hz.
+    /* Clients ease toward the last transform the authority sent. Snapping
+       would show every packet as a jump at 15Hz.
+
+       This is also what reconciles the local push guess in pushProp: the
+       prediction moves the prop now, and the ease pulls it onto the truth
+       over the following frames, so a wrong guess costs a small slide rather
+       than a visible jump. */
     for (const rec of props.values()) {
       if (heldProp && heldProp.id === rec.id) continue;
       if (!rec.netPos) continue;
@@ -3269,6 +3303,17 @@ function tick() {
 
   stepLocal(dt);
   for (const avatar of remotes.values()) avatar.stepRemote(dt);
+
+  /* Everyone else's shoves, applied here because the authority is the only
+     machine allowed to move a prop. A client that walks into a crate cannot
+     move it itself — two machines pushing the same object would fight over
+     where it ended up — so their push has to be reproduced by whoever owns
+     the simulation, from the position they last reported. Without this, only
+     the host could push anything and every other player walked through the
+     world moving nothing. */
+  if (propsAuthoritative() && props.size) {
+    for (const avatar of remotes.values()) resolveCollisions(avatar, false);
+  }
   stepCamera(dt);
   stepHeldProp(dt);
   stepProps(dt);
