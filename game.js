@@ -15,7 +15,7 @@ import { MODELS, PROP_MODELS, SOUNDS, MAP_FIELDS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v59 hang below';
+const BUILD = 'v60 remote jump';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -1606,23 +1606,45 @@ class Avatar {
   }
 
   /** Advances the jump state machine and vertical motion. */
-  stepJump(dt) {
-    if (this.jumpPhase === 'active') {
-      const prev = this.jumpClock;
-      this.jumpClock += dt;
+  /**
+   * Advances the jump's own clock and retires it when the clip is done.
+   *
+   * Split out from the gravity below because remote avatars need this half
+   * and must not have the other. Their height arrives over the network, so
+   * simulating a fall for them would fight the packets — but without the
+   * clock running, `jumpPhase` is set to 'active' when their jump packet
+   * lands and then never cleared, and the animation blend holds them in the
+   * jump pose for the rest of the session. That is what froze other players
+   * after they escaped a magnet: breaking free means hammering Space, so a
+   * jump fires the moment they are loose, and they locked up mid-air.
+   */
+  stepJumpClock(dt) {
+    if (this.jumpPhase !== 'active') return;
 
-      // The launch fires partway in, after the crouch has visibly read.
-      if (prev < LAUNCH_TIME && this.jumpClock >= LAUNCH_TIME) {
+    const prev = this.jumpClock;
+    this.jumpClock += dt;
+
+    // The launch fires partway in, after the crouch has visibly read.
+    if (prev < LAUNCH_TIME && this.jumpClock >= LAUNCH_TIME) {
+      sfx.jump(this.group.position);
+
+      // Only the owner of a body launches it; a remote's arc is reported.
+      if (this.isLocal) {
         this.velY = JUMP_SPEED;
         this.grounded = false;
-        sfx.jump(this.group.position);
-      }
-
-      if (this.jumpClock >= this.jumpDuration ||
-         (this.grounded && this.jumpClock > TOUCHDOWN_TIME + 0.25)) {
-        this.jumpPhase = 'none';
       }
     }
+
+    /* A remote is never meaningfully grounded, so the touchdown shortcut
+       cannot apply to it — the clip's own length is what ends the jump. */
+    if (this.jumpClock >= this.jumpDuration ||
+       (this.isLocal && this.grounded && this.jumpClock > TOUCHDOWN_TIME + 0.25)) {
+      this.jumpPhase = 'none';
+    }
+  }
+
+  stepJump(dt) {
+    this.stepJumpClock(dt);
 
     /* The ground is no longer always y=0. floorY is whatever surface is
        currently under the feet — the world, or the top of a prop — and is
@@ -1739,6 +1761,9 @@ class Avatar {
     while (diff >  Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
     this.group.rotation.y += diff * k;
+
+    // The clock only. Height is reported, so gravity must not run here.
+    this.stepJumpClock(dt);
 
     this.stepAnimation(dt);
     this.stepFootsteps();
