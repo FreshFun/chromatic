@@ -5,7 +5,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { MODELS, PROP_MODELS, SOUNDS, toBuffer } from './assets.js';
+import { MODELS, PROP_MODELS, SOUNDS, MAP_FIELDS, toBuffer } from './assets.js';
 
 
 /* ==========================================================================
@@ -15,7 +15,7 @@ import { MODELS, PROP_MODELS, SOUNDS, toBuffer } from './assets.js';
 
 /* Printed on load and shown on the title screen, so it's obvious at a glance
    whether the browser is running current code or a cached copy. */
-const BUILD = 'v47 bodies';
+const BUILD = 'v59 hang below';
 console.log('ANON build:', BUILD);
 
 /* The hip bone genuinely should rotate through a run — that motion is a lot
@@ -29,7 +29,11 @@ const STRIP_HIP_YAW = true;
    -------------------------------------------------------------------------- */
 
 const RUN_SPEED  = 6.4;
-const TURN_SPEED = 7;
+/* Raised from 7 once travel stopped waiting for the turn. With the two
+   coupled, a fast spin looked twitchy because the path whipped round with it;
+   now the body is only catching up to a direction the player is already
+   moving in, and a slow catch-up reads as the character sliding. */
+const TURN_SPEED = 11;
 const ACCEL      = 13;
 
 /* A thumb resting on a stick is never perfectly still, and the direction it
@@ -410,6 +414,399 @@ function lockRootMotion(clip) {
    Scene
    -------------------------------------------------------------------------- */
 
+/* --------------------------------------------------------------------------
+   Maps
+
+   A map is the ground, the sky and anything solid that never moves. Two of
+   them for now: a flat baseplate, and open country with hills.
+
+   The important consequence is that the ground stops being y=0. Every part of
+   the physics assumed a floor at zero — the player's fall clamp, where a prop
+   comes to rest, where debris stops bouncing — and all of it now asks the map
+   how high the ground is at a point instead. Rift answers zero to everything,
+   so the flat case costs one function call and behaves exactly as before.
+
+   Terrain is a heightfield sampled on a grid: the same array builds the mesh
+   and answers the physics queries, which is what keeps a player's feet on the
+   surface they can see. Deriving them separately is the classic way to get a
+   character wading shin-deep through a hillside.
+   -------------------------------------------------------------------------- */
+
+const MAP_SIZE  = 400;     // metres across
+const TERRAIN_STEP = 2.5;  // metres per heightfield cell
+
+const MAPS = {
+  rift: {
+    name: 'Rift',
+    sky: 0x9fb6cf,
+    fog: [45, 140],
+    ground: 0xa39687,
+    grid: true,
+    terrain: null
+  }
+};
+
+/* Also shelved. The heightfield it collides against is still in assets.js and
+   the loader that fetches its model is still above, so restoring it is moving
+   this into MAPS and putting its lobby back. */
+const DUSTY_BASIN = {
+  name: 'Dusty Basin',
+  sky: 0xd9c39a,
+  fog: [55, 190],
+  ground: 0xc2a878,
+  grid: false,
+  terrain: null,
+  model: 'dusty_basin.glb',
+  field: MAP_FIELDS.dusty,
+  scale: 1,
+  spawn: { x: 22, z: 13.4 }
+};
+
+/* Shelved, not deleted. Everything it needs is still here — the heightfield,
+   the terrain lookup the physics reads, the slope limit that turns its rim
+   into a wall — so bringing it back is moving this entry into MAPS above and
+   adding its lobby to the list below. Kept out of the object rather than
+   commented out so it stays syntax-checked and cannot quietly rot. */
+const CROSSLANDS = {
+  name: 'Crosslands',
+  sky: 0xa9c8e4,
+  fog: [70, 260],
+  ground: 0x6d8f4c,
+  grid: false,
+  terrain: crosslandsHeight
+};
+
+let currentMap = 'rift';
+let mapGroup = null;        // everything the current map added to the scene
+
+/* The heightfield for whatever map is loaded, or null when the ground is
+   flat. Carries its own origin and spacing rather than assuming a centred
+   square, because a baked map only covers the part of the world it occupies —
+   Dusty Basin is a forty-metre town sitting in the middle of a much larger
+   plane, and outside its grid the ground is simply flat. */
+let field = null;
+let fieldNX = 0, fieldNZ = 0;
+let fieldX0 = 0, fieldZ0 = 0, fieldStep = 1;
+
+/** Deterministic hash — the same terrain on every machine, with no seed to send. */
+function hash2(ix, iz) {
+  let h = Math.imul(ix, 374761393) + Math.imul(iz, 668265263);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+
+/** Value noise. Smootherstep between lattice points, so slopes have no creases. */
+function noise2(x, z) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const fx = x - ix, fz = z - iz;
+
+  const u = fx * fx * fx * (fx * (fx * 6 - 15) + 10);
+  const v = fz * fz * fz * (fz * (fz * 6 - 15) + 10);
+
+  const a = hash2(ix, iz);
+  const b = hash2(ix + 1, iz);
+  const c = hash2(ix, iz + 1);
+  const d = hash2(ix + 1, iz + 1);
+
+  return (a + (b - a) * u) + ((c + (d - c) * u) - (a + (b - a) * u)) * v;
+}
+
+function smoothstep(edge0, edge1, x) {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Crosslands: a flat clearing, rolling hills around it, mountains at the rim.
+ *
+ * The clearing exists because a sandbox needs somewhere level. Stacking crates
+ * on a slope is miserable — they slide, they topple, and the tower everyone
+ * was building falls down for reasons nobody can see. So the middle is flat
+ * and the interesting ground starts once you walk out of it.
+ *
+ * The mountains are the map's edges. A world that simply stops is worse than
+ * one that rises until you cannot climb it, and it costs nothing beyond the
+ * terrain that is already there.
+ */
+function crosslandsHeight(x, z) {
+  const d = Math.hypot(x, z);
+
+  // Rolling ground, two octaves: broad shapes with smaller bumps on top.
+  let h = (noise2(x * 0.011, z * 0.011) - 0.5) * 11;
+  h += (noise2(x * 0.034, z * 0.034) - 0.5) * 2.6;
+
+  // Level in the middle, easing into the hills rather than stepping up to them.
+  h *= smoothstep(14, 44, d);
+
+  // The rim. Squared so it stays gentle for a long way and then climbs hard.
+  const rim = smoothstep(88, 168, d);
+  h += rim * rim * 62;
+
+  return h;
+}
+
+/** Builds the heightfield from a generator, for procedural maps. */
+function buildField(fn) {
+  const n = Math.floor(MAP_SIZE / TERRAIN_STEP) + 1;
+  const half = MAP_SIZE / 2;
+
+  field = new Float32Array(n * n);
+  fieldNX = fieldNZ = n;
+  fieldX0 = fieldZ0 = -half;
+  fieldStep = TERRAIN_STEP;
+
+  for (let iz = 0; iz < n; iz++) {
+    for (let ix = 0; ix < n; ix++) {
+      field[iz * n + ix] = fn(-half + ix * TERRAIN_STEP, -half + iz * TERRAIN_STEP);
+    }
+  }
+}
+
+/**
+ * Unpacks a heightfield baked from a model.
+ *
+ * Signed centimetres, which is why it is so small: thirteen thousand cells of
+ * collision for a whole town in thirty-five kilobytes, against several
+ * megabytes for the mesh it was measured from. Half-centimetre precision is
+ * far finer than anything a player can feel underfoot.
+ */
+function loadField(packed, meta, scale) {
+  const bytes = toBuffer(packed);
+  const cm = new Int16Array(bytes);
+
+  fieldNX = meta.nx;
+  fieldNZ = meta.nz;
+  fieldX0 = meta.x0 * scale;
+  fieldZ0 = meta.z0 * scale;
+  fieldStep = meta.step * scale;
+
+  field = new Float32Array(cm.length);
+  for (let i = 0; i < cm.length; i++) field[i] = (cm[i] / 100) * scale;
+}
+
+/**
+ * Ground height at a point.
+ *
+ * Reads the same array the mesh was built from, bilinearly. Sampling the
+ * noise function directly would be tidier to write and subtly wrong: the mesh
+ * interpolates linearly between vertices, so a curve evaluated between them
+ * sits slightly above or below the surface being drawn, and the player floats
+ * or sinks by a few centimetres depending where they stand.
+ */
+function groundAt(x, z) {
+  if (!field) return 0;
+
+  const gx = (x - fieldX0) / fieldStep;
+  const gz = (z - fieldZ0) / fieldStep;
+
+  // Outside the baked area the ground is flat, which is what the plane the
+  // town sits on actually is.
+  if (gx < 0 || gz < 0 || gx > fieldNX - 1 || gz > fieldNZ - 1) return 0;
+
+  const cx = Math.min(fieldNX - 2, Math.floor(gx));
+  const cz = Math.min(fieldNZ - 2, Math.floor(gz));
+
+  const fx = gx - cx;
+  const fz = gz - cz;
+
+  const i = cz * fieldNX + cx;
+
+  const a = field[i];
+  const b = field[i + 1];
+  const c = field[i + fieldNX];
+  const d = field[i + fieldNX + 1];
+
+  return (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fz;
+}
+
+/** Tears down whatever map is loaded. */
+function clearMap() {
+  if (!mapGroup) return;
+
+  mapGroup.traverse(o => {
+    if (o.isMesh) {
+      o.geometry.dispose();
+      if (o.material.dispose) o.material.dispose();
+    }
+  });
+
+  scene.remove(mapGroup);
+  mapGroup = null;
+  field = null;
+}
+
+/**
+ * Drops everything onto the surface of whatever map just loaded.
+ *
+ * Changing map moves the ground under things that were resting on the old
+ * one, and nothing recomputes its own height while asleep. Without this a
+ * joiner arrives standing at the altitude of the map they were not in — under
+ * a hill, or hovering above a valley.
+ */
+function settleOnGround(place = false) {
+  const def = MAPS[currentMap];
+
+  if (local) {
+    /* Placed rather than merely dropped when arriving on a map, because the
+       point a player happens to be standing on may be inside a wall on the
+       one they are arriving at. */
+    if (place && def && def.spawn) {
+      local.group.position.x = def.spawn.x + (Math.random() - 0.5) * 3;
+      local.group.position.z = def.spawn.z + (Math.random() - 0.5) * 3;
+    }
+
+    local.group.position.y = groundAt(local.group.position.x, local.group.position.z);
+    local.velY = 0;
+    local.grounded = true;
+  }
+
+  for (const rec of props.values()) {
+    rec.asleep = false;      // let the integrator find the new surface
+  }
+}
+
+/* Loaded model maps, kept so a second visit is instant. */
+const mapModels = {};
+
+/**
+ * Fetches a map's model.
+ *
+ * Separate file rather than base64 in assets.js. Five megabytes inlined
+ * becomes nearly seven after base64, which would take the single-file build
+ * from under two megabytes to over eight — an enormous download for people
+ * who never open this map. As a fetch it is paid for only by those who play
+ * it, and only once.
+ */
+async function loadMapModel(def) {
+  if (mapModels[def.model]) return mapModels[def.model];
+
+  const loader = new GLTFLoader();
+
+  /* Five megabytes over a phone connection is several seconds of an empty
+     town, and an empty town looks like a bug rather than a download. */
+  notice(`Loading ${def.name}…`, 30000);
+
+  const gltf = await loader.loadAsync(def.model);
+  notice(`${def.name} loaded`, 1500);
+
+  mapModels[def.model] = gltf.scene;
+  return gltf.scene;
+}
+
+function buildMap(id) {
+  const def = MAPS[id] || MAPS.rift;
+  currentMap = MAPS[id] ? id : 'rift';
+
+  clearMap();
+  mapGroup = new THREE.Group();
+
+  scene.background = new THREE.Color(def.sky);
+  scene.fog = new THREE.Fog(def.sky, def.fog[0], def.fog[1]);
+
+  const material = new THREE.MeshStandardMaterial({
+    color: def.ground,
+    roughness: 0.96,
+    metalness: 0,
+
+    /* Flat shading on terrain. Smooth normals across 2.5m cells give a soft
+       rounded look that fights everything else on screen; faceting the hills
+       puts them in the same family as the pixelation and the hard-edged
+       props. */
+    flatShading: !!def.terrain
+  });
+
+  let geo;
+
+  if (def.terrain) {
+    buildField(def.terrain);
+
+    const segs = fieldSize - 1;
+    geo = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, segs, segs);
+
+    // PlaneGeometry runs +z downward before the -90 rotation, so its rows
+    // arrive reversed relative to the field; walking them backwards keeps the
+    // mesh and the lookup describing the same hill.
+    const pos = geo.attributes.position;
+
+    for (let iz = 0; iz <= segs; iz++) {
+      for (let ix = 0; ix <= segs; ix++) {
+        const v = iz * (segs + 1) + ix;
+        pos.setZ(v, field[(segs - iz) * fieldSize + ix]);
+      }
+    }
+
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+  } else {
+    geo = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE);
+  }
+
+  const ground = new THREE.Mesh(geo, material);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  mapGroup.add(ground);
+
+  if (def.grid) {
+    const grid = new THREE.GridHelper(MAP_SIZE, MAP_SIZE / 2, 0xffffff, 0xffffff);
+    grid.material.opacity = 0.1;
+    grid.material.transparent = true;
+    grid.position.y = 0.01;
+    mapGroup.add(grid);
+  }
+
+  /* Collision comes from the baked field, and it is loaded here rather than
+     with the model so the ground is solid from the first frame — a player
+     dropped in before the mesh arrives stands on the town they cannot yet
+     see, instead of falling through it. */
+  if (def.field) loadField(def.field.data, def.field, def.scale || 1);
+
+  scene.add(mapGroup);
+}
+
+/** Adds the model to a map that has one. Safe to call before or after joining. */
+async function attachMapModel(id) {
+  const def = MAPS[id];
+  if (!def || !def.model) return;
+
+  const built = currentMap;
+
+  let model;
+  try {
+    model = await loadMapModel(def);
+  } catch (err) {
+    /* Reported in game, not to the loading screen — by the time this resolves
+       that screen is hidden, so the old message went somewhere nobody could
+       see it and the map simply failed in silence.
+
+       The heightfield is already in place, so the town is still solid and
+       still walkable. What is missing is only the picture of it. */
+    console.error('map model failed:', def.model, err);
+
+    notice(`Map model missing — put ${def.model} next to index.html`, 8000);
+    return;
+  }
+
+  // The player may have left or switched maps while this was in flight.
+  if (currentMap !== built || !mapGroup) return;
+
+  const scale = def.scale || 1;
+  const inst = model.clone(true);
+
+  /* The field was baked with its walking surface moved to zero; the model has
+     to move by the same amount or the two describe different towns. */
+  inst.scale.setScalar(scale);
+  inst.position.y = -(def.field ? (def.field.groundShift || 0) : 0) * scale;
+
+  inst.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+    }
+  });
+
+  mapGroup.add(inst);
+}
+
 function buildScene() {
   renderer = new THREE.WebGLRenderer({ antialias: false });
   renderer.setPixelRatio(1);
@@ -429,8 +826,6 @@ function buildScene() {
   document.body.appendChild(labelRenderer.domElement);
 
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x9fb6cf);
-  scene.fog = new THREE.Fog(0x9fb6cf, 45, 140);
 
   // Metal is mostly reflection, so it needs something to reflect.
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -453,8 +848,12 @@ function buildScene() {
   sun.position.set(12, 20, 8);
   sun.castShadow = true;
   sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
-  const s = 30;
-  Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 70 });
+  /* Deep enough for a map with a seventeen-metre tower standing in it. The
+     box is centred on the player and follows them, so its width is about how
+     far shadows reach, and its depth about how tall the world is allowed to
+     be. */
+  const s = 34;
+  Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 110 });
   sun.shadow.camera.updateProjectionMatrix();
   sun.shadow.bias = -0.0006;
   scene.add(sun, sun.target);
@@ -466,19 +865,7 @@ function buildScene() {
   rim.position.set(-9, 7, -11);
   scene.add(rim);
 
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(400, 400),
-    new THREE.MeshStandardMaterial({ color: 0xa39687, roughness: 0.96, metalness: 0 })
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  scene.add(ground);
-
-  const grid = new THREE.GridHelper(400, 200, 0xffffff, 0xffffff);
-  grid.material.opacity = 0.1;
-  grid.material.transparent = true;
-  grid.position.y = 0.01;
-  scene.add(grid);
+  buildMap(currentMap);
 
   applyResolution();
   addEventListener('resize', () => {
@@ -1249,10 +1636,15 @@ class Avatar {
       this.group.position.y += this.velY * dt;
 
       if (this.group.position.y <= floorY) {
+        const impact = -this.velY;
+
         this.group.position.y = floorY;
         this.velY = 0;
         this.grounded = true;
         sfx.land(this.group.position);
+
+        // Only the player's own landings, and only real ones.
+        if (this.isLocal && impact > 6) shakeCamera(Math.min(0.3, impact * 0.02));
       }
     } else if (this.group.position.y > floorY + 0.02) {
       // The prop you were standing on moved or was deleted. Start falling
@@ -1334,12 +1726,20 @@ class Avatar {
     this.group.position.x += (this.targetPos.x - this.group.position.x) * k;
     this.group.position.z += (this.targetPos.z - this.group.position.z) * k;
 
+    /* Height is eased toward the reported value rather than simulated. The
+       jump arc, standing on a prop and hanging off a magnet are all just
+       heights as far as this end is concerned, and easing to the sender's
+       number reproduces every one of them without needing to know which it
+       is. Faster than the horizontal ease, since vertical error reads as
+       floating and is more obvious. */
+    this.group.position.y += (this.targetPos.y - this.group.position.y)
+      * (1 - Math.exp(-18 * dt));
+
     let diff = this.targetRotY - this.group.rotation.y;
     while (diff >  Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
     this.group.rotation.y += diff * k;
 
-    this.stepJump(dt);
     this.stepAnimation(dt);
     this.stepFootsteps();
     this.stepTag(dt);
@@ -1432,6 +1832,15 @@ function stepLocal(dt) {
     return;
   }
 
+  /* Stuck to a magnet. Walking is out, but the animation still runs so the
+     legs kick, and the tag still tracks so the name follows you up. */
+  if (magnet) {
+    stepMagnet(dt);
+    local.stepAnimation(dt);
+    local.stepTag(dt);
+    return;
+  }
+
   // Camera-relative movement, flattened onto the ground plane.
   forward.set(Math.sin(yaw), 0, Math.cos(yaw));
   right.set(-forward.z, 0, forward.x);
@@ -1461,31 +1870,70 @@ function stepLocal(dt) {
   const moving = throttle > 0 && move.lengthSq() > 0.0001;
   if (moving) move.normalize();
 
-  /* One heading drives both facing and travel.
+  /* One heading drives both facing and travel, but it is only smoothed for
+   * analogue input.
    *
-   * A thumb on a stick is never still, so the raw input direction jitters a
-   * few degrees every frame. Steering the character's *path* with that makes
-   * it weave from side to side — the wobble that reads as the character
-   * shaking while it runs. Smoothing only the facing, as an earlier version
-   * did, fixes how it looks while leaving the path just as noisy.
+   * A thumb on a stick is never still, so its raw direction jitters a few
+   * degrees every frame. Steering the character's *path* with that makes it
+   * weave from side to side, so the stick's heading is eased before anything
+   * downstream sees it.
    *
-   * So the input sets a heading, the heading is smoothed once, and everything
-   * downstream uses it. The character travels exactly where it points. */
+   * A key is not a stick. WASD produces one of eight exact directions with no
+   * noise in it at all, so the same easing buys nothing and costs the thing
+   * that matters most about keyboard control: pressing S now sends the
+   * character on a quarter-second arc through a turn rather than reversing.
+   * The smoothing was solving a problem digital input does not have.
+   *
+   * Facing still eases below, so the body turns rather than snapping round.
+   * What changes is that it no longer drags the direction of travel with it. */
   if (moving) {
     const want = Math.atan2(move.x, move.z);
 
-    let d = want - headingTarget;
-    while (d >  Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
+    if (stick.id !== null) {
+      let d = want - headingTarget;
+      while (d >  Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
 
-    headingTarget += d * (1 - Math.exp(-HEADING_SMOOTH * dt));
+      headingTarget += d * (1 - Math.exp(-HEADING_SMOOTH * dt));
+    } else {
+      headingTarget = want;
+    }
   }
 
   const target = moving ? RUN_SPEED * throttle : 0;
   local.speed += (target - local.speed) * Math.min(1, dt * ACCEL);
 
   travel.set(Math.sin(headingTarget), 0, Math.cos(headingTarget));
+  const fromX = local.group.position.x;
+  const fromZ = local.group.position.z;
+  const fromH = groundAt(fromX, fromZ);
+
   local.group.position.addScaledVector(travel, local.speed * dt);
+
+  /* Refuse ground too steep to walk up.
+
+     The floor is simply set to the terrain height each frame, which on its
+     own means a player can ascend a cliff face at walking pace — and that
+     makes the mountains decorative rather than the edge of the world they are
+     meant to be. Comparing the rise against the distance covered turns the
+     rim into a wall while leaving every hill walkable: the hills run to about
+     ten degrees and the rim reaches fifty-five.
+
+     Only while grounded. Jumping at a slope should still get you partway up
+     it, which is a fair reward for trying. */
+  if (local.grounded) {
+    const moved = Math.hypot(local.group.position.x - fromX,
+                             local.group.position.z - fromZ);
+
+    if (moved > 1e-5) {
+      const rise = groundAt(local.group.position.x, local.group.position.z) - fromH;
+
+      if (rise > moved * MAX_CLIMB) {
+        local.group.position.x = fromX;
+        local.group.position.z = fromZ;
+      }
+    }
+  }
 
   // Facing eases onto the same heading, a touch slower, which reads as the
   // body leaning into a turn rather than pivoting on the spot.
@@ -1503,7 +1951,11 @@ function stepLocal(dt) {
      frame's floor to clamp to. Order matters only in that the player push can
      move you into a prop, and the prop pass then has the chance to move you
      back out; the reverse would leave you inside one. */
-  const bodyFloor = resolvePlayers(local);
+  const bodyFloor = Math.max(
+    resolvePlayers(local),
+    groundAt(local.group.position.x, local.group.position.z)
+  );
+
   resolveCollisions(local, true, bodyFloor);
 
   local.stepJump(dt);
@@ -1518,6 +1970,40 @@ function stepLocal(dt) {
    rather than from looking at a smoothed point, and height tracks a ground
    anchor rather than the character, so jumping cannot move the view.
    -------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------
+   Camera shake
+
+   Applied after the camera has been placed, as an offset rather than as a
+   change to where it is looking. Rotating instead would swing the aim, and
+   the aim is what the grab beam and the spawn direction are both derived
+   from — a knock would send props flying off at an angle nobody chose.
+   -------------------------------------------------------------------------- */
+
+let shake = 0;
+const shakeOffset = new THREE.Vector3();
+
+function shakeCamera(amount) {
+  shake = Math.min(0.9, shake + amount);
+}
+
+function applyShake(dt) {
+  if (shake < 0.001) return;
+
+  /* Decays fast. An impact is a spike, and anything that rings on for half a
+     second stops reading as a hit and starts reading as a wobble. */
+  shake *= Math.max(0, 1 - 9 * dt);
+
+  const a = shake * 0.35;
+
+  shakeOffset.set(
+    (Math.random() - 0.5) * a,
+    (Math.random() - 0.5) * a,
+    (Math.random() - 0.5) * a
+  );
+
+  camera.position.add(shakeOffset);
+}
 
 function stepCamera(dt) {
   const p = local.group.position;
@@ -1559,7 +2045,13 @@ function stepCamera(dt) {
     followPos.z - Math.cos(yaw) * flat
   );
 
-  if (camera.position.y < 0.4) camera.position.y = 0.4;
+  /* Keep the view above the ground it is orbiting. On flat maps this is the
+     old clamp; on terrain it stops the camera burying itself in the hill
+     behind the player when they walk up a slope. */
+  const under = groundAt(camera.position.x, camera.position.z) + 0.4;
+  if (camera.position.y < under) camera.position.y = under;
+
+  applyShake(dt);
 
   camera.rotation.set(-pitch, yaw + Math.PI, 0);
 }
@@ -1659,8 +2151,113 @@ const PROPS = [
     collider: 'cylinder', geo: () => new THREE.TorusGeometry(0.5, 0.16, 12, 28) },
 
   { id: 'wedge',  name: 'Wedge',  color: 0x2a7fb8, metal: 0.4,  rough: 0.4,
-    collider: 'box',    geo: () => wedgeGeometry(1.6, 0.7, 1.2) }
+    collider: 'box',    geo: () => wedgeGeometry(1.6, 0.7, 1.2) },
+
+  /* The Comically Large Magnet. A prop like any other — it can be carried,
+     thrown and stacked — that additionally grabs people by the head. */
+  /* Floats, and always stands upright.
+
+     Both because a magnet you have to fight is a worse toy than one you can
+     place. Under gravity it fell, rolled, and settled on whichever face it
+     landed on — and a bolt on its side points its head at nothing, so half
+     the time the thing that exists to catch people could not reach anybody.
+     Floating also lets it be left at head height, which is where it is
+     useful, without needing something to stand it on.
+
+     hover 3.4 puts the underside of the head at 2.7 m: above a standing
+     player, so they are hauled up to it rather than walking into it, and low
+     enough that they hang with their boots well clear of the floor. */
+  { id: 'magnet', name: 'Bolt', color: 0x9aa2ab, metal: 0.72, rough: 0.28,
+    collider: 'box', magnet: true, mass: 3.2, headRadius: 1.0,
+    float: true, upright: true, hover: 3.4,
+    geo: () => boltGeometry() }
 ];
+
+/**
+ * A horseshoe magnet, built from a half-torus and two cylinders.
+ *
+ * Poles down, which matters: the grab point sits between the tips, so it has
+ * to be somewhere a player can walk into. Standing it on its back would put
+ * the business end in the air where nobody could reach it.
+ */
+function boltGeometry() {
+  /* A hex-headed bolt hanging point-up: head at the bottom, thread rising
+     out of it.
+
+     Upside down from how a bolt sits in a hole, and deliberately so. The head
+     is the part that catches people, so it wants to face the ground they are
+     standing on — a wide flat underside at roughly head height, pointing down
+     at whoever walks past. With the head on top the only surface anyone could
+     reach was its rim, which meant approaching from exactly the right side.
+
+     The origin stays at the collar where the two meet, so the shaft rises
+     from y=0 and the head hangs just below it. */
+  const SHAFT_R = 0.48, SHAFT_L = 2.5;
+  const HEAD_R = 1.0, HEAD_H = 0.7;
+
+  const parts = [];
+
+  // Six radial segments makes a cylinder into a hex nut.
+  const head = new THREE.CylinderGeometry(HEAD_R, HEAD_R, HEAD_H, 6);
+  head.translate(0, -HEAD_H / 2, 0);
+  parts.push(head);
+
+  const shaft = new THREE.CylinderGeometry(SHAFT_R, SHAFT_R, SHAFT_L, 16);
+  shaft.translate(0, SHAFT_L / 2, 0);
+  parts.push(shaft);
+
+  /* Thread. Rings rather than a real helix: at this size the difference is
+     invisible and a helix would need the geometry generated by hand, where a
+     stack of tori is five lines. */
+  for (let i = 0; i < 5; i++) {
+    const ring = new THREE.TorusGeometry(SHAFT_R, 0.085, 6, 16);
+    ring.rotateX(Math.PI / 2);
+    ring.translate(0, 0.5 + i * 0.42, 0);
+    parts.push(ring);
+  }
+
+  return mergeGeometries(parts);
+}
+
+/**
+ * Concatenates geometries that share an attribute layout.
+ *
+ * three ships a merge utility in its addons, but pulling in another module
+ * for one function used once is not worth the import — and doing it here
+ * keeps the vertex layout under this file's control, which matters because
+ * the outline shell reads the same buffers.
+ */
+function mergeGeometries(list) {
+  let total = 0;
+  for (const g of list) total += g.attributes.position.count;
+
+  const pos = new Float32Array(total * 3);
+  const nor = new Float32Array(total * 3);
+  const idx = [];
+
+  let v = 0;
+  for (const g of list) {
+    const p = g.attributes.position.array;
+    const n = g.attributes.normal.array;
+    pos.set(p, v * 3);
+    nor.set(n, v * 3);
+
+    const gi = g.index ? g.index.array : null;
+    if (gi) for (let i = 0; i < gi.length; i++) idx.push(gi[i] + v);
+    else for (let i = 0; i < g.attributes.position.count; i++) idx.push(i + v);
+
+    v += g.attributes.position.count;
+    g.dispose();
+  }
+
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setIndex(idx);
+  out.computeBoundingSphere();
+
+  return out;
+}
 
 /** A right-angled ramp. Built by hand, since three has no wedge primitive. */
 function wedgeGeometry(w, h, d) {
@@ -1727,6 +2324,7 @@ const PROP_BOUNCE    = 0.32;  // how much of an impact is returned on landing
 const PROP_ROLL_DRAG = 0.55;  // ground friction, per second
 const PROP_AIR_DRAG  = 0.12;
 const PROP_SLEEP     = 0.06;  // speed below which a prop stops simulating
+const FLOAT_DRAG     = 2.8;   // how quickly a floating prop coasts to a halt
 const PROP_SPIN_DRAG = 0.9;   // tumble damping in the air, per second
 const PROP_LAND_DRAG = 6.0;   // and on the ground, where it should settle fast
 const TUMBLE_GAIN    = 1.0;   // how much spin a throw imparts
@@ -1941,7 +2539,13 @@ function addProp(id, kind, x, y, z, ry) {
       ? built.radius - built.centre.y
       : built.half.y - built.centre.y,
 
-    mass: propMass(built.collider, built.half, built.radius),
+    /* Volume-derived unless the entry says otherwise. The magnet needs the
+       override: at its size the formula makes it four times heavier than a
+       boulder, which would leave it unpushable and almost uncarryable — and a
+       magnet nobody can reposition is a magnet nobody can use on anyone. */
+    mass: def.mass !== undefined
+      ? def.mass
+      : propMass(built.collider, built.half, built.radius),
 
     // Clients interpolate toward these rather than snapping to each packet.
     netPos: null,
@@ -2016,7 +2620,15 @@ function spawnPoint(def) {
     const x = p.x + Math.sin(angle) * dist;
     const z = p.z + Math.cos(angle) * dist;
 
-    best = { x, y: def.lift || 0.5, z, ry: Math.random() * Math.PI * 2 };
+    /* Floating props are placed at head height rather than on the floor,
+       which is where they are useful and saves the player carrying every one
+       of them up off the ground before it does anything. */
+    best = {
+      x,
+      y: groundAt(x, z) + (def.hover !== undefined ? def.hover : (def.lift || 0.5)),
+      z,
+      ry: Math.random() * Math.PI * 2
+    };
 
     let clear = true;
     for (const rec of props.values()) {
@@ -2051,6 +2663,7 @@ function spawnPoint(def) {
 const PLAYER_RADIUS = 0.34;
 const PLAYER_HEIGHT = 1.7;
 const STEP_UP       = 0.62;   // ledge height that can be walked onto directly
+const MAX_CLIMB     = 1.0;    // tangent of the steepest walkable slope: 45 degrees
 const COLLIDE_SKIN  = 0.001;  // leaves contact rather than exact touching
 
 const collideVec = new THREE.Vector3();
@@ -2627,43 +3240,52 @@ function simulateProps(dt) {
     }
 
     const pos = rec.group.position;
+    const floats = !!rec.def.float;
 
-    rec.vel.y += PROP_GRAVITY * dt;
+    if (!floats) rec.vel.y += PROP_GRAVITY * dt;
 
     pos.x += rec.vel.x * dt;
     pos.y += rec.vel.y * dt;
     pos.z += rec.vel.z * dt;
 
-    /* Where this prop comes to rest: the ground, or the top of whatever it
-       is sitting on.
+    /* A floating prop behaves as though it were always in contact: it damps,
+       it rights itself, and it sleeps wherever it was let go. What it does
+       not do is fall, so it has no rest height to find. */
+    let onGround = floats;
+    let damp;
 
-       Derived from the prop's *current* pose rather than its bind-pose
-       half-height. A crate tipped onto its corner reaches lower than one
-       sitting flat, and using the flat figure buried it in the floor up to a
-       fifth of its size while it toppled. */
-    const rest = propSupport(rec, propShape(rec));
+    if (floats) {
+      damp = Math.max(0, 1 - FLOAT_DRAG * dt);
+      rec.vel.multiplyScalar(damp);
+    } else {
+      /* Where this prop comes to rest: the ground, or the top of whatever it
+         is sitting on.
 
-    let onGround = false;
+         Derived from the prop's *current* pose rather than its bind-pose
+         half-height. A crate tipped onto its corner reaches lower than one
+         sitting flat, and using the flat figure buried it in the floor up to
+         a fifth of its size while it toppled. */
+      const rest = propSupport(rec, propShape(rec));
 
-    if (pos.y <= rest) {
-      pos.y = rest;
+      if (pos.y <= rest) {
+        pos.y = rest;
 
-      /* Only bounce off a real impact. Without the threshold a prop at rest
-         jitters forever, bouncing off the microscopic velocity gravity gives
-         it each frame. */
-      rec.vel.y = rec.vel.y < -1.2 ? -rec.vel.y * PROP_BOUNCE : 0;
-      onGround = true;
+        /* Only bounce off a real impact. Without the threshold a prop at rest
+           jitters forever, bouncing off the microscopic velocity gravity
+           gives it each frame. */
+        rec.vel.y = rec.vel.y < -1.2 ? -rec.vel.y * PROP_BOUNCE : 0;
+        onGround = true;
+      }
+
+      // Friction on the ground, light drag in the air.
+      damp = Math.max(0, 1 - (onGround ? PROP_ROLL_DRAG : PROP_AIR_DRAG) * dt);
+      rec.vel.x *= damp;
+      rec.vel.z *= damp;
     }
-
-    // Friction on the ground, light drag in the air.
-    const drag = onGround ? PROP_ROLL_DRAG : PROP_AIR_DRAG;
-    const damp = Math.max(0, 1 - drag * dt);
-    rec.vel.x *= damp;
-    rec.vel.z *= damp;
 
     const speed = Math.hypot(rec.vel.x, rec.vel.z);
 
-    if (rec.collider === 'sphere' && onGround && speed > 0.001) {
+    if (rec.collider === 'sphere' && onGround && !floats && speed > 0.001) {
       /* Rolling without slipping: the contact point is stationary, so the
          turn rate is speed over radius, about the horizontal axis at right
          angles to travel. This is what makes a ball look like it is rolling
@@ -2679,8 +3301,9 @@ function simulateProps(dt) {
       rec.angVel.multiplyScalar(Math.max(0, 1 - spinDrag * dt));
     }
 
-    // Fall over rather than balancing on an edge. Only once it is down —
-    // in the air there is nothing to push against.
+    // Fall over rather than balancing on an edge. Only once it is down — in
+    // the air there is nothing to push against — though a floating prop
+    // counts as down, since it is holding itself up anyway.
     if (onGround) rightProp(rec, dt);
 
     applySpin(rec, dt);
@@ -2691,7 +3314,7 @@ function simulateProps(dt) {
 
        The spin has to be still as well, or a prop that has stopped moving but
        is mid-tumble freezes at whatever angle it happened to be at. */
-    if (onGround && speed < PROP_SLEEP && Math.abs(rec.vel.y) < PROP_SLEEP
+    if (onGround && Math.abs(rec.vel.y) < PROP_SLEEP && speed < PROP_SLEEP
         && rec.angVel.lengthSq() < PROP_SLEEP * PROP_SLEEP
         && restingFlat(rec)) {
       rec.vel.set(0, 0, 0);
@@ -2799,6 +3422,8 @@ function propShape(rec) {
    ends up on screen, because the ground drag is a fixed rate and swamps a
    weak torque — the block took five and a half seconds to fall off its own
    corner and read as stuck rather than as heavy. */
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
 const RIGHT_TORQUE  = 22.0;
 const RIGHT_SIZE    = 0.4;   // the size the figure above is tuned for
 const RIGHT_SNAP    = 0.04;  // radians from stable at which it is called done
@@ -2837,8 +3462,23 @@ function snapToAxis(v, out, avoid) {
   return out;
 }
 
+const restEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
 /** Writes the nearest orientation this prop could rest in into `out`. */
 function nearestRest(rec, out) {
+  /* Some props have exactly one pose worth resting in. The bolt is the case
+     that forced this: as a box it had twenty-four, and on the ground it would
+     settle onto whichever face it happened to land on. A bolt on its side
+     points its head at nothing, so the prop that exists to catch people spent
+     half its time unable to. Standing it back up is not a physical answer,
+     but it is the one that makes it work as a toy. */
+  if (rec.def.upright) {
+    // YXZ order puts the turn about the world's vertical first, so keeping
+    // that term and dropping the rest preserves the spin and removes the tilt.
+    restEuler.setFromQuaternion(rec.group.quaternion, 'YXZ');
+    return out.setFromAxisAngle(WORLD_UP, restEuler.y);
+  }
+
   const m = rec.group.matrixWorld.elements;
 
   axX.set(m[0], m[1], m[2]).normalize();
@@ -2965,9 +3605,11 @@ function overlapInPlan(ax, az, sa, bx, bz, sb) {
  * instead of bumping into it.
  */
 function propSupport(rec, sh) {
-  const groundRest = rec.collider === 'sphere'
+  const under = groundAt(rec.group.position.x, rec.group.position.z);
+
+  const groundRest = under + (rec.collider === 'sphere'
     ? rec.rest
-    : sh.ey - rec.centre.y;
+    : sh.ey - rec.centre.y);
 
   let best = groundRest;
 
@@ -3117,6 +3759,235 @@ function separateProps(list, dt) {
       }
     }
   }
+}
+
+/* --------------------------------------------------------------------------
+   The magnet
+
+   Walk too close and it takes you by the head.
+
+   Only the head: the player is hauled up until the crown of their skull meets
+   the metal, and hangs there with their feet off the ground. Catching them by
+   the body would read as a wall you had bumped into, whereas being lifted by
+   the top of your head is unmistakably a magnet and unmistakably a joke.
+
+   Resolved on each client for itself, like body collision. The magnet is a
+   prop whose position everyone already agrees on, so both machines reach the
+   same conclusion from the same numbers; and since height now travels in the
+   state packet, everyone sees the dangling without a single message about it.
+   -------------------------------------------------------------------------- */
+
+const MAGNET_RANGE   = 3.8;   // how far the pull reaches, in metres
+const MAGNET_SNAP    = 0.9;   // within this, it has you
+const MAGNET_PULL    = 26;    // how hard you are dragged in
+const MAGNET_HOLD    = 0.55;  // seconds before struggling can free you
+const MAGNET_ESCAPES = 4;     // jumps needed to tear loose
+const MAGNET_COOLDOWN = 1.1;  // grace after breaking out, so it cannot re-grab
+
+let magnet = null;            // the prop that has us, or null
+let magnetClock = 0;
+let magnetStruggle = 0;
+let magnetFree = 0;           // cooldown remaining
+
+const magnetPoint = new THREE.Vector3();
+const magnetPull = new THREE.Vector3();
+const magnetQuat = new THREE.Quaternion();
+
+/* The hex head in the bolt's own space: centre, radius, half-thickness. And
+   how far a skull holds a player off whatever it is stuck to. */
+const MAGNET_HEAD = new THREE.Vector3(0, -0.35, 0);
+const MAGNET_HEAD_R = 1.0;
+const MAGNET_HEAD_H = 0.35;
+const HEAD_RADIUS = 0.2;
+
+/* Two scratch vectors, not one.
+
+   magLocal belongs to magnetSurface, which overwrites it on entry. magHead is
+   the caller's, holding the player's head in world space.
+
+   They used to be the same object, and that was the bug behind a magnet
+   working once and then never again: checkMagnets filled it with the head
+   position, passed it in, and magnetSurface immediately replaced the contents
+   with the same point converted to the bolt's local space. The range test
+   that followed then measured a world-space surface point against a
+   local-space one — a meaningless number that happened to be small enough to
+   pass from some standing positions and not from others. */
+const magLocal = new THREE.Vector3();
+const magHead = new THREE.Vector3();
+const magInv = new THREE.Matrix4();
+const magNormal = new THREE.Vector3();
+const magSurface = new THREE.Vector3();
+const magUp = new THREE.Vector3(0, 1, 0);
+
+/**
+ * The point on the underside of the bolt head that a player sticks to.
+ *
+ * The underside only — not the rim, not the top. The earlier version took
+ * whichever face was nearest, which is the geometrically correct answer and
+ * the wrong one to want: walking up to a bolt puts you level with its rim, so
+ * that is what you caught on, and you ended up pinned to the side of it lying
+ * sideways in the air. Being hauled up underneath is the whole picture the
+ * thing is for.
+ *
+ * Solved in the bolt's own space, so a bolt that has been turned still offers
+ * its own underside rather than whatever happens to be facing down in the
+ * world.
+ */
+function magnetSurface(rec, pos, outPoint, outNormal) {
+  magInv.copy(rec.group.matrixWorld).invert();
+  magLocal.copy(pos).applyMatrix4(magInv).sub(MAGNET_HEAD);
+
+  const R = MAGNET_HEAD_R;
+  const radial = Math.hypot(magLocal.x, magLocal.z);
+
+  /* Kept under the flange rather than snapped to its middle. Where you were
+     standing when it caught you is where you hang, which makes two people on
+     one bolt hang side by side instead of inside each other. */
+  const rr = Math.min(radial, R * 0.82);
+
+  outPoint.set(
+    radial > 1e-4 ? (magLocal.x / radial) * rr : 0,
+    -MAGNET_HEAD_H,
+    radial > 1e-4 ? (magLocal.z / radial) * rr : 0
+  );
+
+  outNormal.set(0, -1, 0);
+
+  outPoint.add(MAGNET_HEAD).applyMatrix4(rec.group.matrixWorld);
+
+  // Direction only, so the rotation applies but the translation must not.
+  outNormal.transformDirection(rec.group.matrixWorld);
+}
+
+/**
+ * Finds a magnet close enough to take hold, and grabs.
+ *
+ * Measured to the head rather than the feet, since the head is what sticks.
+ */
+function checkMagnets(dt) {
+  if (magnetFree > 0) magnetFree -= dt;
+  if (magnet || magnetFree > 0 || bursting) return;
+
+  const head = local.group.position.y + PLAYER_HEIGHT;
+
+  for (const rec of props.values()) {
+    if (!rec.def.magnet) continue;
+    if (heldProp && heldProp.id === rec.id) continue;   // not while carrying it
+
+    /* Distance to the metal itself, not to the bolt's centre. Measuring to
+       the centre makes the reach depend on which way a bolt happens to be
+       lying, since its head is a metre from the middle of its shaft. */
+    magHead.set(local.group.position.x, head, local.group.position.z);
+    magnetSurface(rec, magHead, magSurface, magNormal);
+
+    if (magSurface.distanceToSquared(magHead) > MAGNET_RANGE * MAGNET_RANGE) continue;
+
+    magnet = rec;
+    magnetClock = 0;
+    magnetStruggle = 0;
+
+    releaseProp();
+
+    /* The hit lands on contact, not on release, and it lands hard: the sound
+       at full volume plus a camera kick scaled by how fast you arrived. A
+       quiet snap would make the strongest force in the game feel like walking
+       into a doorframe. */
+    sfx.clip('magnet', local.group.position, 1);
+    shakeCamera(0.45 + Math.min(0.5, local.speed * 0.07));
+
+    notice('Magnetised — hammer Space to break free', 2600);
+
+    return;
+  }
+}
+
+/**
+ * Drags a caught player onto the magnet and holds them there.
+ *
+ * The pull is a spring rather than a teleport, so there is a visible moment of
+ * being yanked off your feet — which is most of the joke, and free, since the
+ * distance is already known.
+ */
+function stepMagnet(dt) {
+  if (!magnet) return;
+
+  // Deleted, or picked up by somebody else.
+  if (!props.has(magnet.id) || (heldProp && heldProp.id === magnet.id)) {
+    dropMagnet();
+    return;
+  }
+
+  magnetClock += dt;
+
+  const pos = local.group.position;
+
+  // Contact is measured from the head, which is the end that sticks.
+  magHead.set(pos.x, pos.y + PLAYER_HEIGHT, pos.z);
+  magnetSurface(magnet, magHead, magSurface, magNormal);
+
+  /* Where the body has to be for its head to sit on that point: out along the
+     normal by a skull, then by a whole body, because the character hangs from
+     its head rather than standing under it. */
+  magnetPoint.copy(magSurface)
+    .addScaledVector(magNormal, HEAD_RADIUS + PLAYER_HEIGHT);
+
+  magnetPull.subVectors(magnetPoint, pos);
+  const dist = magnetPull.length();
+
+  if (dist > MAGNET_SNAP) {
+    const k = Math.min(1, dt * MAGNET_PULL / Math.max(1, dist));
+    pos.addScaledVector(magnetPull, k);
+  } else {
+    pos.copy(magnetPoint);
+  }
+
+  /* Turned head-first into the metal. A character's up axis runs from its
+     feet to its head, and the head is the end stuck to the surface, so up is
+     the inward normal. Eased rather than snapped, so being caught reads as
+     being swung round by the skull. */
+  magUp.copy(magNormal).negate();
+  magnetQuat.setFromUnitVectors(WORLD_UP, magUp);
+  local.group.quaternion.slerp(magnetQuat, Math.min(1, dt * 12));
+
+  local.velY = 0;
+  local.speed = 0;
+  local.grounded = false;
+
+  /* Struggling out. A single tap would make the magnet a non-event, and a
+     timer would make it something you wait through; several presses is the
+     one option that is actually about the player doing something. */
+  if (magnetClock > MAGNET_HOLD) {
+    const down = keys.has('Space');
+
+    if (down && !magnetSpaceWas) {
+      magnetStruggle++;
+      shakeCamera(0.12);
+      if (magnetStruggle >= MAGNET_ESCAPES) dropMagnet();
+    }
+
+    magnetSpaceWas = down;
+  }
+}
+
+let magnetSpaceWas = false;
+
+function dropMagnet() {
+  if (!magnet) return;
+
+  /* Back on your feet. The character was turned to hang head-first, and
+     nothing else writes the full orientation — the walking code only ever
+     sets rotation.y — so without this the player would keep running around
+     sideways for the rest of the session. */
+  local.group.quaternion.identity();
+  local.group.rotation.y = headingTarget;
+
+  magnet = null;
+  magnetFree = MAGNET_COOLDOWN;
+  magnetSpaceWas = false;
+
+  // Thrown clear rather than dropped, so breaking free reads as an effort.
+  local.velY = 5.2;
+  local.grounded = false;
 }
 
 /* --------------------------------------------------------------------------
@@ -3284,8 +4155,10 @@ function stepPiles(dt) {
 
       p.mesh.position.addScaledVector(p.vel, dt);
 
-      if (p.mesh.position.y <= p.rest) {
-        p.mesh.position.y = p.rest;
+      const under = groundAt(p.mesh.position.x, p.mesh.position.z) + p.rest;
+
+      if (p.mesh.position.y <= under) {
+        p.mesh.position.y = under;
 
         // Only bounce off a real impact, or a settled piece jitters forever.
         p.vel.y = p.vel.y < -1.0 ? -p.vel.y * DEBRIS_BOUNCE : 0;
@@ -3310,6 +4183,18 @@ function stepPiles(dt) {
   }
 }
 
+/** A line of text that shows for a few seconds and then removes itself. */
+let noticeTimer = null;
+
+function notice(text, ms = 4000) {
+  const el_ = el('notice');
+  el_.textContent = text;
+  el_.classList.remove('hidden');
+
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => el_.classList.add('hidden'), ms);
+}
+
 /** Removes every pile at once, for leaving the room. */
 function clearPiles() {
   for (const pile of piles) {
@@ -3325,6 +4210,9 @@ function burstLocal() {
 
   bursting = true;
   burstClock = 0;
+
+  // Detonating is also a way out of a magnet, which seems only fair.
+  if (magnet) dropMagnet();
 
   releaseProp();
 
@@ -3824,6 +4712,9 @@ function tick() {
   stepPiles(dt);
   stepBurst(dt);
 
+  // After the props have moved, so a magnet carried into you still catches.
+  if (local && !bursting) checkMagnets(dt);
+
   /* The shadow camera moves with the player, and moving it by fractions of a
      unit each frame makes every shadow edge crawl and fizz — easily mistaken
      for the camera itself shaking. Snapping it to a coarse grid means it only
@@ -3834,8 +4725,13 @@ function tick() {
   const sx = Math.round(pp.x / snap) * snap;
   const sz = Math.round(pp.z / snap) * snap;
 
-  sun.position.set(sx + 12, 20, sz + 8);
-  sun.target.position.set(sx, 0, sz);
+  /* Lifted onto the terrain, not pinned to zero. The shadow camera has a
+     fixed near and far, so on a map where the ground sits fifty metres up the
+     hills would fall outside its range and stop casting entirely. */
+  const sy = groundAt(sx, sz);
+
+  sun.position.set(sx + 12, sy + 20, sz + 8);
+  sun.target.position.set(sx, sy, sz);
   sun.target.updateMatrixWorld();
 
   stepNetwork(dt);
@@ -4119,11 +5015,23 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no I/O/0/1 to read a
    server keeping them alive, so "always up" means: whoever arrives first
    silently becomes the host, and if that person leaves, the remaining players
    race to take over. From a player's side a lobby is simply always there. */
+/* Each public lobby is one map, permanently. Rotating on a timer was the
+   obvious alternative and it is wrong for a sandbox: rotation suits games
+   with rounds, where the round ending is the moment everything is meant to be
+   swept away. Here it would bulldoze a tower somebody was halfway through
+   building, and the lesson players take from that is to stop building.
+   Variety across rooms costs nothing and destroys nothing. */
 const PUBLIC_LOBBIES = [
-  { code: 'PLAZA', name: 'Plaza' },
-  { code: 'DUNES', name: 'Dunes' },
-  { code: 'VOIDX', name: 'Void'  }
+  { code: 'RIFT', name: 'Rift', map: 'rift' }
 ];
+
+/** The map a room should be on: fixed for public lobbies, chosen for private. */
+function mapForRoom(code) {
+  const lobby = PUBLIC_LOBBIES.find(l => l.code === code);
+  return lobby ? lobby.map : hostMapChoice;
+}
+
+let hostMapChoice = 'rift';   // what the host picked for a private room
 
 const isPublic = code => PUBLIC_LOBBIES.some(l => l.code === code);
 
@@ -4212,6 +5120,13 @@ function startHost(code) {
   return new Promise((resolve, reject) => {
     isHost = true;
     roomCode = code;
+
+    /* Settled the moment we become the host, and re-applied even when it has
+       not changed — taking over from a host that dropped runs through here
+       too, and the map has to survive that. */
+    buildMap(mapForRoom(code));
+    settleOnGround(true);
+    attachMapModel(currentMap);
     peer = new Peer(peerIdFor(code), PEER_CONFIG);
     myId = 'host';
 
@@ -4236,7 +5151,10 @@ function startHost(code) {
     peer.on('connection', conn => {
       conn.on('open', () => {
         connections.set(conn.peer, conn);
-        conn.send({ t: 'welcome', id: conn.peer });
+        // The map travels with the welcome. A joiner that has not been told
+        // which world it is in would build the default and fall through the
+        // terrain everyone else is standing on.
+        conn.send({ t: 'welcome', id: conn.peer, map: currentMap });
       });
 
       conn.on('data', msg => onHostMessage(conn, msg));
@@ -4362,6 +5280,12 @@ async function onHostLost() {
   if (!local) { reclaiming = false; return; }
 
   try {
+    /* Whatever map the room was on stays the map. startHost asks mapForRoom,
+       which for a private code returns this value — so pointing it at the
+       current map is what stops a takeover dumping everyone onto the
+       default. */
+    hostMapChoice = currentMap;
+
     await enterRoom(roomCode, { allowHost: true });
     netStatus.textContent = '1 ONLINE';
   } catch {
@@ -4455,6 +5379,12 @@ function onHostMessage(conn, msg) {
 function onClientMessage(msg) {
   if (msg.t === 'welcome') {
     myId = msg.id;
+
+    if (msg.map && msg.map !== currentMap) {
+      buildMap(msg.map);
+      settleOnGround(true);
+      attachMapModel(currentMap);
+    }
   } else if (msg.t === 'hostleaving') {
     // A courtesy warning, so takeover starts now rather than after the
     // connection eventually times out.
@@ -4634,7 +5564,7 @@ function ensureRemote(id, name, skin) {
 }
 
 function applyState(avatar, s) {
-  avatar.targetPos.set(s.x, 0, s.z);
+  avatar.targetPos.set(s.x, s.y === undefined ? avatar.group.position.y : s.y, s.z);
   avatar.targetRotY = s.r;
   avatar.speed = s.s;
   avatar.lastPacket = performance.now();
@@ -4654,6 +5584,16 @@ function localState() {
     n: myName,
     k: mySkin,
     x: +local.group.position.x.toFixed(2),
+
+    /* Height travels now, where it used to be inferred.
+    
+       A remote's y was recomputed from the terrain under them, which is right
+       on open ground and wrong everywhere else — standing on a crate, on
+       someone's head, or hanging off a magnet all put a player somewhere the
+       ground cannot explain. Everyone else saw them at ground level, standing
+       on nothing. Their own client already knows the answer exactly, so it is
+       cheaper to send it than to have every other machine guess. */
+    y: +local.group.position.y.toFixed(2),
     z: +local.group.position.z.toFixed(2),
     r: +local.group.rotation.y.toFixed(3),
     s: +local.speed.toFixed(2),
@@ -4760,6 +5700,11 @@ function teardownNetwork() {
 function leaveGame() {
   reclaiming = false;
   bursting = false;
+
+  if (magnet && local) dropMagnet();
+  magnet = null;
+  magnetFree = 0;
+  shake = 0;
   clearPiles();
   closeChat();
   closeInternet(false);          // no relock; we're going back to the title
@@ -5126,6 +6071,14 @@ async function enterGame(mode, code) {
       bindChat();
     }
 
+    /* Solo never negotiates with anyone, so it just builds what was picked.
+       Hosting sets the map in startHost; joining is told by the welcome. */
+    if (mode === 'solo') {
+      buildMap(hostMapChoice);
+      settleOnGround(true);
+      attachMapModel(currentMap);
+    }
+
     if (mode === 'public') {
       loadText.textContent = 'Entering lobby…';
       stopLobbyPolling();
@@ -5155,6 +6108,15 @@ async function enterGame(mode, code) {
   }
 
   local = new Avatar(myName, true, mySkin);
+
+  /* Placed here, not where the map was built.
+     
+     The map is chosen during the network handshake, which happens before the
+     avatar exists — so every settleOnGround call up to this point ran against
+     a null local and did nothing at all. On a flat map that was invisible,
+     since the origin is as good a spot as any; on Dusty Basin the origin is
+     inside a building, which is exactly where everyone was being put. */
+  settleOnGround(true);
 
   loadScreen.classList.add('hidden');
   document.body.classList.add('playing');
@@ -5223,10 +6185,46 @@ function renderSkins() {
 try {
   const saved = parseInt(localStorage.getItem('anon.skin'), 10);
   if (Number.isInteger(saved) && saved >= 0 && saved < SKINS.length) mySkin = saved;
+
+  /* Checked against MAPS rather than trusted, so a saved choice for a map
+     that is no longer registered falls back instead of building nothing. */
+  const map = localStorage.getItem('anon.map');
+  if (map && MAPS[map]) hostMapChoice = map;
 } catch {}
 
 renderSkins();
+renderMaps();
 buildInternet();
+
+/** The map picker, which only applies to solo and to rooms you create. */
+function renderMaps() {
+  const wrap = el('maps');
+  const ids = Object.keys(MAPS);
+
+  /* Hidden while there is only one map. A picker with a single option is
+     worse than none: it looks like a choice, and finding out it is not is a
+     click wasted. */
+  wrap.closest('.field').classList.toggle('hidden', ids.length < 2);
+  if (ids.length < 2) return;
+
+  wrap.innerHTML = '';
+
+  for (const [id, def] of Object.entries(MAPS)) {
+    const btn = document.createElement('button');
+    btn.className = 'map-chip' + (id === hostMapChoice ? ' on' : '');
+    btn.type = 'button';
+    btn.textContent = def.name;
+
+    btn.addEventListener('click', () => {
+      hostMapChoice = id;
+
+      try { localStorage.setItem('anon.map', id); } catch {}
+      renderMaps();
+    });
+
+    wrap.appendChild(btn);
+  }
+}
 
 el('buildtag').textContent = 'build ' + BUILD;
 

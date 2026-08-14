@@ -36,6 +36,14 @@
 
     <div class="divider"><span>or a private room</span></div>
 
+    <!-- Only meaningful when you are the one creating the room. Joining a code
+         puts you on whatever the host chose, and the public lobbies each have
+         a map of their own. -->
+    <div class="field">
+      <label>Map <span class="hint">solo &amp; rooms you create</span></label>
+      <div id="maps"></div>
+    </div>
+
     <div class="actions">
       <button id="btn-solo" class="ghost">Play solo</button>
       <button id="btn-host" class="primary">Create room</button>
@@ -115,6 +123,9 @@
     <p class="net-foot">Hold <b>LMB</b> to carry · scroll to reach · <b>Q</b>/<b>E</b> turn · flick to fling · <b>R</b> deletes</p>
   </div>
 </div>
+
+<!-- Transient in-game messages. One line, centre bottom, gone on its own. -->
+<div id="notice" class="hidden"></div>
 
 <!-- Touch controls. The stick is positioned wherever the thumb lands rather
      than pinned to a fixed spot, so it works for any hand size or grip. -->

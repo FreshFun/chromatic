@@ -1019,3 +1019,62 @@ body.playing {
   30%      { transform: translateX(-5px); }
   70%      { transform: translateX(5px); }
 }
+
+/* Map picker. Chips rather than the skin swatches: a map has a name worth
+   reading and no single colour that would represent it honestly. */
+#maps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.map-chip {
+  padding: 7px 13px;
+  font-size: 11px;
+  letter-spacing: .08em;
+  color: var(--dim);
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.map-chip:hover { color: var(--text); border-color: rgba(255, 255, 255, .26); }
+
+.map-chip.on {
+  color: #0b0d10;
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.field label .hint {
+  margin-left: 6px;
+  font-size: 9px;
+  letter-spacing: .04em;
+  color: var(--dim);
+  text-transform: none;
+}
+
+/* In-game notice. Used for things the player needs to know but must not be
+   stopped by — a missing map model, where the game is still playable. */
+#notice {
+  position: fixed;
+  left: 50%;
+  bottom: 74px;
+  transform: translateX(-50%);
+  z-index: 11;
+  max-width: min(460px, calc(100vw - 32px));
+  padding: 8px 14px;
+  font-size: 11px;
+  letter-spacing: .03em;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--text);
+  background: rgba(10, 12, 15, .82);
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .4);
+  pointer-events: none;
+}
+
+#notice.hidden { display: none; }
